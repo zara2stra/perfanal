@@ -2,12 +2,14 @@
 Flask application for the Perf Flame Analyzer.
 
 Routes:
-  /                  - Dashboard (list uploads, filter by cluster)
-  /upload            - Upload a perf bundle
-  /analysis/<id>     - View analysis results + flamegraph
-  /api/flamegraph/<id>  - JSON for d3-flame-graph
+  /                     - Dashboard (list uploads, filter by cluster)
+  /upload               - Upload a perf bundle
+  /analysis/<id>        - View analysis results + flamegraph
+  /api/flamegraph/<id>  - JSON for d3-flame-graph (?pid=, ?process=, ?mode=, ?active_only=)
+  /api/processes/<id>   - Thread/service list for filter dropdown
+  /api/pids/<id>        - PID list with comm names and sample counts
   /api/analysis/<id>    - Diagnosis JSON
-  /delete/<id>       - Delete an upload
+  /delete/<id>          - Delete an upload
 """
 
 import os
@@ -24,7 +26,7 @@ from flask import (
 
 from models import init_db, insert_upload, get_all_uploads, get_cluster_ids, \
     get_uploads_by_cluster, get_upload, delete_upload
-from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, _is_idle_sample
+from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS
 from diagnostics import run_diagnostics, _classify_thread
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -98,14 +100,27 @@ def api_flamegraph(upload_id):
         abort(404)
 
     process_filter = request.args.get('process', '').strip()
+    pid_filter = request.args.get('pid', '').strip()
     mode = request.args.get('mode', 'thread')
     active_only = request.args.get('active_only', '').strip()
-    folded = record.get('folded_json')
 
+    # When filtering by PID, use the per-PID folded stacks
+    if pid_filter:
+        pid_folded = record.get('pid_folded_json') or {}
+        working = dict(pid_folded.get(pid_filter, {}))
+        if active_only == '1':
+            working = {
+                stack: count for stack, count in working.items()
+                if not any(marker in stack for marker in IDLE_FRAME_MARKERS)
+            }
+        if working:
+            return jsonify(folded_to_flamegraph_json(working))
+        return jsonify({'name': 'root', 'value': 0, 'children': []})
+
+    folded = record.get('folded_json')
     if not folded:
         return jsonify(record.get('flamegraph_json', {}))
 
-    from parser import IDLE_FRAME_MARKERS
     working = dict(folded)
 
     if active_only == '1':
@@ -174,6 +189,74 @@ def api_processes(upload_id):
         return jsonify([{'name': p, 'samples': c} for p, c in result])
 
 
+@app.route('/api/pids/<int:upload_id>')
+def api_pids(upload_id):
+    """Return merged list of all processes (from ps) and sampled PIDs (from perf).
+
+    Every process from ps_aux.txt is included.  Processes that were
+    captured by perf get their sample count filled in; the rest show 0.
+    """
+    record = get_upload(upload_id)
+    if record is None:
+        abort(404)
+    analysis = record.get('analysis_json') or {}
+    pid_map = analysis.get('pid_map', [])
+    ps_map = analysis.get('ps_map', {})
+    total = record.get('total_samples') or 1
+
+    # Build a lookup of perf sample counts keyed by PID
+    perf_by_pid = {}
+    for entry in pid_map:
+        perf_by_pid[entry['pid']] = entry
+
+    # Start from ps_map (all processes), enrich with perf data
+    seen_pids = set()
+    result = []
+
+    for pid_str, ps_info in ps_map.items():
+        pid = int(pid_str)
+        seen_pids.add(pid)
+        perf_info = perf_by_pid.get(pid, {})
+        comm = perf_info.get('comm', '')
+        samples = perf_info.get('samples', 0)
+
+        # Derive comm from the ps command basename if perf didn't capture it
+        if not comm and ps_info.get('cmd'):
+            cmd_parts = ps_info['cmd'].split()
+            if cmd_parts:
+                comm = cmd_parts[0].rsplit('/', 1)[-1]
+
+        result.append({
+            'pid': pid,
+            'ppid': ps_info.get('ppid'),
+            'comm': comm,
+            'service': _classify_thread(comm) or '' if comm else '',
+            'cmd': ps_info.get('cmd', ''),
+            'user': ps_info.get('user', ''),
+            'samples': samples,
+            'pct': round(100.0 * samples / total, 2),
+            'sampled': samples > 0,
+        })
+
+    # Also include any perf PIDs not found in ps (kernel threads, etc.)
+    for entry in pid_map:
+        if entry['pid'] not in seen_pids:
+            result.append({
+                'pid': entry['pid'],
+                'ppid': None,
+                'comm': entry['comm'],
+                'service': _classify_thread(entry['comm']) or '',
+                'cmd': '',
+                'user': '',
+                'samples': entry['samples'],
+                'pct': round(100.0 * entry['samples'] / total, 2),
+                'sampled': True,
+            })
+
+    result.sort(key=lambda x: x['samples'], reverse=True)
+    return jsonify(result)
+
+
 @app.route('/api/analysis/<int:upload_id>')
 def api_analysis(upload_id):
     record = get_upload(upload_id)
@@ -215,6 +298,7 @@ def _process_bundle(file, manual_cluster_id):
     metadata = {}
     perf_text = None
     top_text = None
+    ps_aux_text = None
 
     is_tar = False
     try:
@@ -229,7 +313,7 @@ def _process_bundle(file, manual_cluster_id):
 
     if is_tar:
         try:
-            perf_text, metadata, top_text = _extract_tar_bundle(save_path)
+            perf_text, metadata, top_text, ps_aux_text = _extract_tar_bundle(save_path)
             log.info('Extracted: perf_text=%d chars, metadata keys=%s',
                      len(perf_text) if perf_text else 0,
                      list(metadata.keys()) if metadata else [])
@@ -275,8 +359,16 @@ def _process_bundle(file, manual_cluster_id):
         log.info('Parsed top snapshot: %s', list(system_context.keys()))
     metadata['system_context'] = system_context
 
+    ps_map = {}
+    if ps_aux_text:
+        ps_map = parse_ps_aux(ps_aux_text)
+        log.info('Parsed ps aux: %d processes', len(ps_map))
+
     parsed = parse_and_process(perf_text)
     diag = run_diagnostics(parsed, metadata)
+
+    # Convert int PID keys to strings for JSON serialization
+    pid_folded_str = {str(k): v for k, v in parsed['pid_folded'].items()}
 
     upload_id = insert_upload(
         cluster_id=metadata.get('cluster_id', 'unknown'),
@@ -305,9 +397,12 @@ def _process_bundle(file, manual_cluster_id):
             'idle_pct': parsed['idle_pct'],
             'active_pct': parsed['active_pct'],
             'system_context': system_context,
+            'pid_map': parsed['pid_map'],
+            'ps_map': {str(k): v for k, v in ps_map.items()},
         },
         metadata_json=metadata,
         folded_json=parsed['folded'],
+        pid_folded_json=pid_folded_str,
     )
 
     return {
@@ -318,10 +413,11 @@ def _process_bundle(file, manual_cluster_id):
 
 
 def _extract_tar_bundle(tar_path):
-    """Extract perf_threads.txt, metadata.json, and top_snapshot.txt from a tar.gz bundle."""
+    """Extract perf_threads.txt, metadata.json, top_snapshot.txt, and ps_aux.txt from a tar.gz bundle."""
     perf_text = None
     metadata = {}
     top_text = None
+    ps_aux_text = None
 
     extract_dir = tempfile.mkdtemp(prefix='perf-extract-')
     try:
@@ -346,11 +442,15 @@ def _extract_tar_bundle(tar_path):
                     with open(fpath, 'r', errors='replace') as f:
                         top_text = f.read()
                     log.info('Found top_snapshot.txt: %d chars', len(top_text))
+                elif fname == 'ps_aux.txt':
+                    with open(fpath, 'r', errors='replace') as f:
+                        ps_aux_text = f.read()
+                    log.info('Found ps_aux.txt: %d chars', len(ps_aux_text))
     finally:
         import shutil
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-    return perf_text, metadata, top_text
+    return perf_text, metadata, top_text, ps_aux_text
 
 
 with app.app_context():

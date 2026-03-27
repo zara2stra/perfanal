@@ -448,6 +448,33 @@ pre {
     max-width: 300px;
 }
 
+.pid-filter-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    position: relative;
+}
+
+.fg-pid-input {
+    width: 160px;
+    padding: 0.4rem 0.75rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.9rem;
+    font-family: var(--font-mono);
+}
+
+.fg-pid-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.fg-pid-input::placeholder {
+    font-family: var(--font-sans);
+}
+
 .fg-search {
     flex: 1;
     max-width: 400px;
@@ -608,6 +635,56 @@ pre {
 
 .top-procs-details summary:hover {
     color: var(--accent);
+}
+
+.top-procs-wrap {
+    max-height: 500px;
+    overflow: auto;
+    margin-top: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.top-procs-wrap .data-table {
+    border: none;
+    border-radius: 0;
+}
+
+.top-procs-wrap .data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.top-cmd {
+    font-size: 0.8rem;
+    color: var(--text);
+    white-space: nowrap;
+    max-width: 500px;
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+}
+
+.top-cmd:hover {
+    white-space: normal;
+    overflow: visible;
+    max-width: none;
+}
+
+.col-right {
+    text-align: right !important;
+}
+
+.text-hot {
+    color: var(--red) !important;
+    font-weight: 700;
+}
+
+.text-warm {
+    color: var(--orange) !important;
+    font-weight: 600;
 }
 
 .thread-list {
@@ -786,6 +863,131 @@ pre {
     font-size: 0.85rem;
     font-weight: 600;
     min-width: 0;
+}
+
+/* --- PID Table --- */
+
+.pid-table-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0 0 0.75rem;
+}
+
+.pid-table-wrap {
+    max-height: 420px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.pid-table-wrap .data-table {
+    border: none;
+    border-radius: 0;
+}
+
+.pid-table-wrap .data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.pid-row {
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.pid-row:hover {
+    background: rgba(78, 154, 245, 0.1) !important;
+}
+
+.pid-row-active {
+    background: rgba(78, 154, 245, 0.15) !important;
+    border-left: 3px solid var(--accent);
+}
+
+.pid-row-dim {
+    opacity: 0.5;
+}
+
+.pid-row-dim:hover {
+    opacity: 0.8;
+}
+
+.pid-row-active td:first-child {
+    padding-left: calc(0.6rem - 3px);
+}
+
+.pid-col-right {
+    text-align: right !important;
+}
+
+.pid-col-sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 1.2rem !important;
+}
+
+.pid-col-sortable::after {
+    content: '\2195';
+    position: absolute;
+    right: 0.3rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    opacity: 0.4;
+}
+
+.pid-col-sortable.sort-asc::after {
+    content: '\2191';
+    opacity: 1;
+    color: var(--accent);
+}
+
+.pid-col-sortable.sort-desc::after {
+    content: '\2193';
+    opacity: 1;
+    color: var(--accent);
+}
+
+.pid-service-tag {
+    display: inline-block;
+    background: rgba(61, 220, 132, 0.12);
+    color: var(--green);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.pid-service-none {
+    color: var(--text-muted);
+}
+
+.pid-cmd {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    word-break: break-all;
+    white-space: normal;
+    max-width: 350px;
+    display: inline-block;
+}
+
+.pid-bar-track {
+    height: 16px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.pid-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    min-width: 1px;
+}
+
+.pid-bar-nutanix {
+    background: var(--green);
 }
 
 /* Metadata */

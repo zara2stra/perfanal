@@ -130,24 +130,40 @@
     </div>
 
     {% if ctx.top_processes %}
-    <details class="top-procs-details">
-        <summary>Top processes at capture time</summary>
-        <table class="data-table compact">
-            <thead>
-                <tr><th>PID</th><th>User</th><th>%CPU</th><th>%MEM</th><th>Command</th></tr>
-            </thead>
-            <tbody>
-                {% for p in ctx.top_processes %}
-                <tr>
-                    <td>{{ p.pid }}</td>
-                    <td>{{ p.user }}</td>
-                    <td>{{ p.cpu_pct }}</td>
-                    <td>{{ p.mem_pct }}</td>
-                    <td><code>{{ p.command }}</code></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <details class="top-procs-details" open>
+        <summary>Top processes at capture time (top -c)</summary>
+        <div class="top-procs-wrap">
+            <table class="data-table compact">
+                <thead>
+                    <tr>
+                        <th>PID</th>
+                        <th>User</th>
+                        <th class="col-right">%CPU</th>
+                        <th class="col-right">%MEM</th>
+                        <th class="col-right">VIRT</th>
+                        <th class="col-right">RES</th>
+                        <th>S</th>
+                        <th>TIME+</th>
+                        <th>Command</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in ctx.top_processes %}
+                    <tr>
+                        <td><code>{{ p.pid }}</code></td>
+                        <td>{{ p.user }}</td>
+                        <td class="col-right {% if p.cpu_pct > 50 %}text-hot{% elif p.cpu_pct > 10 %}text-warm{% endif %}">{{ p.cpu_pct }}</td>
+                        <td class="col-right {% if p.mem_pct > 50 %}text-hot{% elif p.mem_pct > 10 %}text-warm{% endif %}">{{ p.mem_pct }}</td>
+                        <td class="col-right">{{ p.virt or '' }}</td>
+                        <td class="col-right">{{ p.res or '' }}</td>
+                        <td>{{ p.state or '' }}</td>
+                        <td><code>{{ p.time or '' }}</code></td>
+                        <td><code class="top-cmd">{{ p.command }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </details>
     {% endif %}
 </div>
@@ -168,12 +184,51 @@
         <select id="fg-process" class="fg-process-filter">
             <option value="">All processes</option>
         </select>
+        <div class="pid-filter-group">
+            <input type="text" id="fg-pid" list="fg-pid-list" placeholder="Filter by PID..." class="fg-pid-input">
+            <datalist id="fg-pid-list"></datalist>
+            <button class="btn btn-sm" id="fg-pid-clear" title="Clear PID filter" style="display:none;">&#x2715;</button>
+        </div>
         <input type="text" id="fg-search" placeholder="Search functions..." class="fg-search">
         <button class="btn btn-sm" id="fg-reset">Reset Zoom</button>
         <button class="btn btn-sm" id="fg-clear">Clear Search</button>
     </div>
     <div id="fg-filter-info" class="fg-filter-info" style="display:none;"></div>
     <div id="flamegraph" class="flamegraph-container"></div>
+</div>
+
+<!-- Process / PID Table -->
+<div class="section-card">
+    <div class="section-header-row">
+        <h2>Process Table <span class="section-subtitle" id="pid-table-count"></span></h2>
+        <div class="toggle-group">
+            <div class="view-toggle" id="pid-show-toggle">
+                <button class="toggle-btn active" data-val="sampled">Sampled Only</button>
+                <button class="toggle-btn" data-val="all">All Processes</button>
+            </div>
+            <input type="text" id="pid-table-search" placeholder="Search PID, name, or command..." class="fg-pid-input" style="width:240px;">
+        </div>
+    </div>
+    <p class="pid-table-hint">Click a row to filter the flamegraph to that PID. Sampled rows had perf hits; dimmed rows are from <code>ps</code> only.</p>
+    <div class="pid-table-wrap">
+        <table class="data-table compact" id="pid-table">
+            <thead>
+                <tr>
+                    <th class="pid-col-sortable" data-sort="pid">PID</th>
+                    <th class="pid-col-sortable" data-sort="ppid">PPID</th>
+                    <th class="pid-col-sortable" data-sort="comm">Thread</th>
+                    <th class="pid-col-sortable" data-sort="service">Service</th>
+                    <th class="pid-col-sortable" data-sort="cmd">Command</th>
+                    <th class="pid-col-sortable pid-col-right" data-sort="samples">Samples</th>
+                    <th class="pid-col-sortable pid-col-right" data-sort="pct">CPU %</th>
+                    <th style="width:20%">Distribution</th>
+                </tr>
+            </thead>
+            <tbody id="pid-table-body">
+                <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- Findings & Recommendations -->
@@ -377,11 +432,17 @@
 (function() {
     var fgBaseUrl = '{{ url_for("api_flamegraph", upload_id=record.id) }}';
     var processesUrl = '{{ url_for("api_processes", upload_id=record.id) }}';
+    var pidsUrl = '{{ url_for("api_pids", upload_id=record.id) }}';
     var processSelect = document.getElementById('fg-process');
+    var pidInput = document.getElementById('fg-pid');
+    var pidDatalist = document.getElementById('fg-pid-list');
+    var pidClearBtn = document.getElementById('fg-pid-clear');
     var filterInfo = document.getElementById('fg-filter-info');
     var chart = null;
     var currentFgMode = 'thread';
     var currentActiveOnly = '1';
+    var currentPid = '';
+    var pidLookup = {};
 
     function createChart() {
         return flamegraph()
@@ -396,8 +457,13 @@
     function loadFlamegraph(processFilter) {
         var url = fgBaseUrl;
         var params = [];
-        if (processFilter) params.push('process=' + encodeURIComponent(processFilter));
-        if (currentFgMode === 'service') params.push('mode=service');
+
+        if (currentPid) {
+            params.push('pid=' + encodeURIComponent(currentPid));
+        } else if (processFilter) {
+            params.push('process=' + encodeURIComponent(processFilter));
+            if (currentFgMode === 'service') params.push('mode=service');
+        }
         if (currentActiveOnly === '1') params.push('active_only=1');
         if (params.length) url += '?' + params.join('&');
 
@@ -419,9 +485,15 @@
 
                 var infoParts = [];
                 if (currentActiveOnly === '1') infoParts.push('active CPU only');
-                if (processFilter) infoParts.push(processFilter);
+                if (currentPid) {
+                    var pidLabel = 'PID ' + currentPid;
+                    if (pidLookup[currentPid]) pidLabel += ' (' + pidLookup[currentPid] + ')';
+                    infoParts.push(pidLabel);
+                } else if (processFilter) {
+                    infoParts.push(processFilter);
+                }
                 infoParts.push(data.value + ' samples');
-                infoParts.push(currentFgMode + ' mode');
+                if (!currentPid) infoParts.push(currentFgMode + ' mode');
 
                 filterInfo.textContent = 'Showing: ' + infoParts.join(' | ');
                 filterInfo.style.display = 'block';
@@ -448,6 +520,222 @@
         });
     }
 
+    var allPids = [];
+    var pidTableSort = { col: 'samples', asc: false };
+    var pidShowMode = 'sampled';
+
+    function loadPidList() {
+        d3.json(pidsUrl).then(function(pids) {
+            pidDatalist.innerHTML = '';
+            pidLookup = {};
+            allPids = pids;
+            pids.forEach(function(p) {
+                if (p.samples > 0) {
+                    pidLookup[String(p.pid)] = p.comm;
+                    var opt = document.createElement('option');
+                    opt.value = p.pid;
+                    opt.label = p.pid + ' - ' + p.comm + ' (' + p.samples + ' samples)';
+                    pidDatalist.appendChild(opt);
+                }
+            });
+            applyPidTableFilters();
+        });
+    }
+
+    function applyPidTableFilters() {
+        var filtered = allPids.slice();
+
+        if (pidShowMode === 'sampled') {
+            filtered = filtered.filter(function(p) { return p.sampled; });
+        }
+
+        // Apply sort
+        var col = pidTableSort.col;
+        var dir = pidTableSort.asc ? 1 : -1;
+        filtered.sort(function(a, b) {
+            var va = a[col], vb = b[col];
+            if (va == null) va = col === 'ppid' ? -1 : '';
+            if (vb == null) vb = col === 'ppid' ? -1 : '';
+            if (typeof va === 'string') return dir * va.localeCompare(vb);
+            return dir * (va - vb);
+        });
+
+        // Apply search
+        var searchVal = document.getElementById('pid-table-search').value.toLowerCase();
+        if (searchVal) {
+            filtered = filtered.filter(function(p) {
+                return String(p.pid).indexOf(searchVal) >= 0
+                    || (p.ppid != null && String(p.ppid).indexOf(searchVal) >= 0)
+                    || p.comm.toLowerCase().indexOf(searchVal) >= 0
+                    || (p.service && p.service.toLowerCase().indexOf(searchVal) >= 0)
+                    || (p.cmd && p.cmd.toLowerCase().indexOf(searchVal) >= 0);
+            });
+        }
+
+        renderPidTable(filtered);
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function truncateCmd(cmd, maxLen) {
+        if (!cmd) return '<span class="pid-service-none">-</span>';
+        if (cmd.length <= maxLen) return '<code class="pid-cmd">' + escapeHtml(cmd) + '</code>';
+        return '<code class="pid-cmd" title="' + escapeHtml(cmd) + '">' + escapeHtml(cmd.substring(0, maxLen)) + '&hellip;</code>';
+    }
+
+    function renderPidTable(pids) {
+        var tbody = document.getElementById('pid-table-body');
+        var countEl = document.getElementById('pid-table-count');
+        var sampledCount = 0;
+        var maxPct = 0;
+        pids.forEach(function(p) {
+            if (p.pct > maxPct) maxPct = p.pct;
+            if (p.sampled) sampledCount++;
+        });
+        maxPct = maxPct || 1;
+
+        var totalCount = allPids.length;
+        var totalSampled = allPids.filter(function(p) { return p.sampled; }).length;
+        countEl.textContent = '(' + pids.length + ' shown, ' + totalSampled + ' sampled of ' + totalCount + ' total)';
+
+        if (!pids.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No processes match. Try "All Processes" or adjust the search.</td></tr>';
+            return;
+        }
+
+        var html = '';
+        pids.forEach(function(p) {
+            var pidStr = String(p.pid);
+            var isActive = pidStr === currentPid;
+            var barWidth = p.pct > 0 ? (p.pct / maxPct * 100).toFixed(1) : '0';
+            var svcHtml = p.service
+                ? '<span class="pid-service-tag">' + escapeHtml(p.service) + '</span>'
+                : '<span class="pid-service-none">-</span>';
+            var ppidHtml = (p.ppid != null)
+                ? '<code>' + p.ppid + '</code>'
+                : '<span class="pid-service-none">-</span>';
+            var rowClass = 'pid-row';
+            if (isActive) rowClass += ' pid-row-active';
+            if (!p.sampled) rowClass += ' pid-row-dim';
+
+            html += '<tr class="' + rowClass + '" data-pid="' + pidStr + '">'
+                + '<td><code>' + p.pid + '</code></td>'
+                + '<td>' + ppidHtml + '</td>'
+                + '<td>' + escapeHtml(p.comm) + '</td>'
+                + '<td>' + svcHtml + '</td>'
+                + '<td>' + truncateCmd(p.cmd, 80) + '</td>'
+                + '<td class="pid-col-right">' + (p.samples || '-') + '</td>'
+                + '<td class="pid-col-right">' + (p.samples > 0 ? p.pct + '%' : '-') + '</td>'
+                + '<td><div class="pid-bar-track"><div class="pid-bar-fill' + (p.service ? ' pid-bar-nutanix' : '') + '" style="width:' + barWidth + '%"></div></div></td>'
+                + '</tr>';
+        });
+        tbody.innerHTML = html;
+
+        tbody.querySelectorAll('.pid-row').forEach(function(row) {
+            row.addEventListener('click', function() {
+                applyPidFilter(this.dataset.pid);
+            });
+        });
+    }
+
+    function applyPidFilter(pid) {
+        currentPid = pid;
+        pidInput.value = pid;
+        pidClearBtn.style.display = '';
+        processSelect.value = '';
+        processSelect.disabled = true;
+        loadFlamegraph('');
+        highlightPidRow(pid);
+        document.getElementById('flamegraph').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function highlightPidRow(pid) {
+        document.querySelectorAll('#pid-table-body .pid-row').forEach(function(row) {
+            row.classList.toggle('pid-row-active', row.dataset.pid === pid);
+        });
+    }
+
+    function sortPidTable(col) {
+        if (pidTableSort.col === col) {
+            pidTableSort.asc = !pidTableSort.asc;
+        } else {
+            pidTableSort.col = col;
+            pidTableSort.asc = (col === 'pid' || col === 'ppid' || col === 'comm' || col === 'service' || col === 'cmd');
+        }
+
+        document.querySelectorAll('#pid-table .pid-col-sortable').forEach(function(th) {
+            th.classList.remove('sort-asc', 'sort-desc');
+            if (th.dataset.sort === col) th.classList.add(pidTableSort.asc ? 'sort-asc' : 'sort-desc');
+        });
+
+        applyPidTableFilters();
+    }
+
+    // PID filter: apply on Enter or when a datalist value is selected
+    var pidDebounce = null;
+    pidInput.addEventListener('input', function() {
+        clearTimeout(pidDebounce);
+        var val = this.value.trim();
+        pidClearBtn.style.display = val ? '' : 'none';
+
+        if (val && pidLookup[val]) {
+            currentPid = val;
+            processSelect.value = '';
+            processSelect.disabled = true;
+            loadFlamegraph('');
+        } else if (!val) {
+            currentPid = '';
+            processSelect.disabled = false;
+            loadFlamegraph(processSelect.value);
+        }
+    });
+
+    pidInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            var val = this.value.trim();
+            if (val && /^\d+$/.test(val)) {
+                currentPid = val;
+                processSelect.value = '';
+                processSelect.disabled = true;
+                pidClearBtn.style.display = '';
+                loadFlamegraph('');
+            }
+        }
+    });
+
+    pidClearBtn.addEventListener('click', function() {
+        pidInput.value = '';
+        currentPid = '';
+        pidClearBtn.style.display = 'none';
+        processSelect.disabled = false;
+        highlightPidRow('');
+        loadFlamegraph(processSelect.value);
+    });
+
+    document.querySelectorAll('#pid-table .pid-col-sortable').forEach(function(th) {
+        th.addEventListener('click', function() {
+            sortPidTable(this.dataset.sort);
+        });
+    });
+
+    document.getElementById('pid-table-search').addEventListener('input', function() {
+        applyPidTableFilters();
+    });
+
+    document.querySelectorAll('#pid-show-toggle .toggle-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('#pid-show-toggle .toggle-btn').forEach(function(b) {
+                b.classList.remove('active');
+            });
+            this.classList.add('active');
+            pidShowMode = this.dataset.val;
+            applyPidTableFilters();
+        });
+    });
+
     // Active/Total toggle for flamegraph
     document.querySelectorAll('#fg-active-toggle .toggle-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
@@ -469,8 +757,10 @@
             this.classList.add('active');
             currentFgMode = this.dataset.mode;
             processSelect.value = '';
-            loadProcessList(currentFgMode);
-            loadFlamegraph('');
+            if (!currentPid) {
+                loadProcessList(currentFgMode);
+                loadFlamegraph('');
+            }
         });
     });
 
@@ -480,7 +770,6 @@
 
     function updateBreakdownVisibility() {
         var panels = ['total-thread', 'total-service', 'active-thread', 'active-service'];
-        var targetId = 'breakdown-' + breakdownActiveMode + '-' + breakdownViewMode;
         panels.forEach(function(id) {
             var el = document.getElementById('breakdown-' + id);
             if (el) el.style.display = id === (breakdownActiveMode + '-' + breakdownViewMode) ? '' : 'none';
@@ -510,7 +799,7 @@
     });
 
     processSelect.addEventListener('change', function() {
-        loadFlamegraph(this.value);
+        if (!currentPid) loadFlamegraph(this.value);
     });
 
     document.getElementById('fg-search').addEventListener('input', function() {
@@ -530,9 +819,10 @@
         if (chart) chart.width(document.getElementById('flamegraph').offsetWidth);
     });
 
-    // Initial state: active thread view
+    // Initial state
     updateBreakdownVisibility();
     loadProcessList('thread');
+    loadPidList();
     loadFlamegraph('');
 })();
 </script>

@@ -43,7 +43,8 @@ def init_db():
             flamegraph_json TEXT,
             analysis_json   TEXT,
             metadata_json   TEXT,
-            folded_json     TEXT
+            folded_json     TEXT,
+            pid_folded_json TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_cluster_id
@@ -53,6 +54,7 @@ def init_db():
             ON uploads(upload_timestamp DESC);
     ''')
     _migrate_add_folded_json(conn)
+    _migrate_add_pid_folded_json(conn)
     conn.commit()
     conn.close()
 
@@ -66,11 +68,20 @@ def _migrate_add_folded_json(conn):
         conn.commit()
 
 
+def _migrate_add_pid_folded_json(conn):
+    """Add pid_folded_json column if it doesn't exist."""
+    cursor = conn.execute("PRAGMA table_info(uploads)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'pid_folded_json' not in columns:
+        conn.execute('ALTER TABLE uploads ADD COLUMN pid_folded_json TEXT')
+        conn.commit()
+
+
 def insert_upload(cluster_id, hostname, collection_timestamp, filename,
                   kernel_version, cpu_info, cpu_count, mem_total,
                   duration_seconds, frequency_hz, total_samples,
                   flamegraph_json, analysis_json, metadata_json,
-                  folded_json=None):
+                  folded_json=None, pid_folded_json=None):
     """Insert a new upload record. Returns the new row ID."""
     conn = get_db()
     cursor = conn.execute('''
@@ -79,8 +90,8 @@ def insert_upload(cluster_id, hostname, collection_timestamp, filename,
             kernel_version, cpu_info, cpu_count, mem_total,
             duration_seconds, frequency_hz, total_samples,
             flamegraph_json, analysis_json, metadata_json,
-            folded_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            folded_json, pid_folded_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         cluster_id, hostname, collection_timestamp, filename,
         kernel_version, cpu_info, cpu_count, mem_total,
@@ -89,6 +100,7 @@ def insert_upload(cluster_id, hostname, collection_timestamp, filename,
         json.dumps(analysis_json) if isinstance(analysis_json, dict) else analysis_json,
         json.dumps(metadata_json) if isinstance(metadata_json, dict) else metadata_json,
         json.dumps(folded_json) if isinstance(folded_json, dict) else folded_json,
+        json.dumps(pid_folded_json) if isinstance(pid_folded_json, dict) else pid_folded_json,
     ))
     conn.commit()
     row_id = cursor.lastrowid
@@ -145,7 +157,7 @@ def get_upload(upload_id):
     if row is None:
         return None
     result = dict(row)
-    for field in ('flamegraph_json', 'analysis_json', 'metadata_json', 'folded_json'):
+    for field in ('flamegraph_json', 'analysis_json', 'metadata_json', 'folded_json', 'pid_folded_json'):
         if result.get(field) and isinstance(result[field], str):
             try:
                 result[field] = json.loads(result[field])

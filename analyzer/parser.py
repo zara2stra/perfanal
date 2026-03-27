@@ -114,6 +114,37 @@ def samples_to_folded(samples):
     return dict(folded)
 
 
+def samples_to_pid_folded(samples):
+    """
+    Convert parsed samples to per-PID folded stacks.
+
+    Returns: {
+        'pid_folded': { pid_int: { "comm;frame1;...": count, ... }, ... },
+        'pid_map': [ { 'pid': int, 'comm': str, 'samples': int }, ... ]
+    }
+    """
+    pid_folded = defaultdict(lambda: defaultdict(int))
+    pid_info = defaultdict(lambda: defaultdict(int))
+
+    for sample in samples:
+        pid = sample['pid']
+        comm = sample['comm']
+        frames = sample['frames'] if sample['frames'] else ['[unknown]']
+        stack = comm + ';' + ';'.join(frames)
+        pid_folded[pid][stack] += 1
+        pid_info[pid][comm] += 1
+
+    pid_map = []
+    for pid, comm_counts in pid_info.items():
+        total = sum(comm_counts.values())
+        primary_comm = max(comm_counts, key=comm_counts.get)
+        pid_map.append({'pid': pid, 'comm': primary_comm, 'samples': total})
+    pid_map.sort(key=lambda x: x['samples'], reverse=True)
+
+    pid_folded_out = {pid: dict(stacks) for pid, stacks in pid_folded.items()}
+    return {'pid_folded': pid_folded_out, 'pid_map': pid_map}
+
+
 def folded_to_flamegraph_json(folded):
     """
     Convert folded stacks dict into the hierarchical JSON structure
@@ -373,45 +404,152 @@ def parse_top_snapshot(text):
             if m:
                 result['mem_avail_kb'] = int(float(m.group(1)) * mult)
 
-    # Parse top process table (lines after the header row with PID)
+    # Parse top process table.
+    # Header: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND
+    # The header column order varies by top version. We detect it dynamically
+    # and use the COMMAND column's character offset (it's always last and may
+    # contain spaces).
     top_procs = []
-    in_table = False
-    header_cols = []
-    for line in lines:
+    header_line = None
+    header_idx = -1
+    for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith('PID'):
-            in_table = True
-            header_cols = stripped.split()
-            continue
-        if in_table and stripped:
-            parts = stripped.split(None, len(header_cols) - 1)
-            if len(parts) >= 7:
-                try:
-                    pid_idx = 0
-                    user_idx = header_cols.index('USER') if 'USER' in header_cols else 2
-                    cpu_idx = header_cols.index('%CPU') if '%CPU' in header_cols else -3
-                    mem_idx = header_cols.index('%MEM') if '%MEM' in header_cols else -2
-                    nth_idx = header_cols.index('nTH') if 'nTH' in header_cols else None
+        if stripped.startswith('PID') and 'COMMAND' in stripped:
+            header_line = line
+            header_idx = i
+            break
 
-                    proc = {
-                        'pid': int(parts[pid_idx]),
-                        'user': parts[user_idx] if user_idx < len(parts) else '',
-                        'cpu_pct': float(parts[cpu_idx]),
-                        'mem_pct': float(parts[mem_idx]),
-                        'command': parts[-1] if len(parts) >= len(header_cols) else '',
-                    }
-                    if nth_idx is not None and nth_idx < len(parts):
-                        try:
-                            proc['threads'] = int(parts[nth_idx])
-                        except ValueError:
-                            pass
-                    top_procs.append(proc)
-                except (ValueError, IndexError):
-                    pass
-            if len(top_procs) >= 10:
+    if header_line is not None:
+        hdr_fields = header_line.split()
+        cmd_char_offset = header_line.find('COMMAND')
+        # Map column name -> index in the split fields
+        col_idx = {name: i for i, name in enumerate(hdr_fields)}
+        n_fixed = len(hdr_fields) - 1  # all columns except COMMAND
+
+        for line in lines[header_idx + 1:]:
+            if not line.strip():
+                continue
+            parts = line.split(None, n_fixed)
+            if len(parts) <= n_fixed:
+                continue
+            try:
+                pid = int(parts[col_idx.get('PID', 0)])
+            except (ValueError, KeyError):
+                continue
+
+            def _col(name):
+                idx = col_idx.get(name)
+                if idx is not None and idx < len(parts):
+                    return parts[idx]
+                return ''
+
+            # COMMAND: take everything from the character offset in the original line
+            if cmd_char_offset >= 0 and len(line) > cmd_char_offset:
+                command = line[cmd_char_offset:].strip()
+            else:
+                command = parts[-1] if parts else ''
+
+            try:
+                cpu_pct = float(_col('%CPU'))
+            except ValueError:
+                cpu_pct = 0.0
+            try:
+                mem_pct = float(_col('%MEM'))
+            except ValueError:
+                mem_pct = 0.0
+
+            top_procs.append({
+                'pid': pid,
+                'user': _col('USER'),
+                'cpu_pct': cpu_pct,
+                'mem_pct': mem_pct,
+                'virt': _col('VIRT'),
+                'res': _col('RES'),
+                'shr': _col('SHR'),
+                'state': _col('S'),
+                'time': _col('TIME+'),
+                'command': command,
+            })
+            if len(top_procs) >= 30:
                 break
 
     result['top_processes'] = top_procs
+    return result
+
+
+def parse_ps_aux(text):
+    """
+    Parse ps output into a PID -> process info map.
+
+    Supports two formats:
+      1. ``ps -eo user,pid,ppid,%cpu,%mem,stat,args --no-headers ww``
+         (new collector, includes PPID, no header line)
+      2. ``ps auxww``
+         (old collector / fallback, has header, no PPID column)
+
+    Returns: { pid_int: { 'user': str, 'ppid': int or None, 'cmd': str }, ... }
+    """
+    if not text or not text.strip():
+        return {}
+
+    lines = text.strip().splitlines()
+    if not lines:
+        return {}
+
+    # Detect format: if the first line starts with a header keyword, it's ps aux
+    first = lines[0].strip()
+    has_header = first.startswith('USER') or first.startswith('UID')
+
+    if has_header:
+        return _parse_ps_aux_format(lines)
+    return _parse_ps_eo_format(lines)
+
+
+def _parse_ps_eo_format(lines):
+    """Parse ``ps -eo user,pid,ppid,%cpu,%mem,stat,args --no-headers ww``."""
+    # Fields: USER PID PPID %CPU %MEM STAT COMMAND...
+    # Split into at most 7 parts; the 7th (index 6) is the full command
+    result = {}
+    for line in lines:
+        parts = line.split(None, 6)
+        if len(parts) < 6:
+            continue
+        try:
+            pid = int(parts[1])
+            ppid = int(parts[2])
+        except ValueError:
+            continue
+
+        result[pid] = {
+            'user': parts[0],
+            'ppid': ppid,
+            'cmd': parts[6] if len(parts) > 6 else '',
+        }
+    return result
+
+
+def _parse_ps_aux_format(lines):
+    """Parse ``ps auxww`` output (has header, no PPID column).
+
+    Header: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+    Always splits into 11 fields (10 fixed + COMMAND remainder) rather
+    than using character offsets, which break when field widths vary.
+    """
+    result = {}
+    for line in lines[1:]:
+        parts = line.split(None, 10)
+        if len(parts) < 11:
+            continue
+        try:
+            pid = int(parts[1])
+        except ValueError:
+            continue
+
+        result[pid] = {
+            'user': parts[0],
+            'ppid': None,
+            'cmd': parts[10],
+        }
     return result
 
 
@@ -426,6 +564,7 @@ def parse_and_process(perf_script_text):
     top_functions = compute_top_functions(folded)
     kernel_user_split = compute_kernel_user_split(samples)
     active_breakdown = compute_active_breakdown(samples)
+    pid_data = samples_to_pid_folded(samples)
 
     return {
         'samples': samples,
@@ -440,4 +579,6 @@ def parse_and_process(perf_script_text):
         'idle_pct': active_breakdown['idle_pct'],
         'active_pct': active_breakdown['active_pct'],
         'active_process_breakdown': active_breakdown['active_process_breakdown'],
+        'pid_folded': pid_data['pid_folded'],
+        'pid_map': pid_data['pid_map'],
     }
