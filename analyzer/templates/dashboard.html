@@ -25,7 +25,7 @@
 
 {% if uploads %}
 <div class="table-wrap">
-    <table class="data-table">
+    <table class="data-table" id="dashboard-table">
         <thead>
             <tr>
                 <th>ID</th>
@@ -36,12 +36,12 @@
                 <th>Kernel</th>
                 <th>Samples</th>
                 <th>Duration</th>
-                <th>Actions</th>
+                <th class="admin-col">Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for u in uploads %}
-            <tr>
+            <tr class="clickable-row" data-href="{{ url_for('analysis', upload_id=u.id) }}">
                 <td>{{ u.id }}</td>
                 <td><span class="cluster-tag">{{ u.cluster_id }}</span></td>
                 <td>{{ u.hostname or '-' }}</td>
@@ -50,13 +50,10 @@
                 <td><code>{{ u.kernel_version or '-' }}</code></td>
                 <td>{{ u.total_samples or 0 }}</td>
                 <td>{{ u.duration_seconds or '-' }}s @ {{ u.frequency_hz or '-' }}Hz</td>
-                <td>
-                    <a href="{{ url_for('analysis', upload_id=u.id) }}" class="btn btn-sm">Analyze</a>
-                    <form method="post" action="{{ url_for('delete', upload_id=u.id) }}"
-                          class="inline-form"
-                          onsubmit="return confirm('Delete this upload?');">
-                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                    </form>
+                <td class="admin-col">
+                    <button class="btn btn-sm btn-danger delete-btn"
+                            data-url="{{ url_for('delete', upload_id=u.id) }}"
+                            data-id="{{ u.id }}">Delete</button>
                 </td>
             </tr>
             {% endfor %}
@@ -69,4 +66,48 @@
     <a href="{{ url_for('upload') }}" class="btn btn-primary">Upload your first bundle</a>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    document.querySelectorAll('.clickable-row').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('.delete-btn')) return;
+            window.location.href = this.dataset.href;
+        });
+    });
+
+    function getAdminToken() {
+        return sessionStorage.getItem('adminToken') || '';
+    }
+
+    function syncAdminCols() {
+        var active = !!getAdminToken();
+        document.querySelectorAll('.admin-col').forEach(function(el) {
+            el.style.display = active ? 'table-cell' : 'none';
+        });
+    }
+
+    document.querySelectorAll('.delete-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var token = getAdminToken();
+            if (!token) return;
+            if (!confirm('Delete upload #' + this.dataset.id + '?')) return;
+            var row = this.closest('tr');
+            fetch(this.dataset.url, {
+                method: 'POST',
+                headers: { 'X-Admin-Token': token }
+            }).then(function(resp) {
+                if (resp.ok) { row.remove(); }
+                else { alert('Delete failed (HTTP ' + resp.status + '). Check admin credentials.'); }
+            });
+        });
+    });
+
+    window.addEventListener('adminModeChanged', syncAdminCols);
+    syncAdminCols();
+})();
+</script>
 {% endblock %}

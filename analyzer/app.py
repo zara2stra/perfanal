@@ -9,9 +9,11 @@ Routes:
   /api/processes/<id>   - Thread/service list for filter dropdown
   /api/pids/<id>        - PID list with comm names and sample counts
   /api/analysis/<id>    - Diagnosis JSON
+  /api/iostat/<id>      - iostat time-series JSON
   /delete/<id>          - Delete an upload
 """
 
+import hashlib
 import os
 import json
 import logging
@@ -24,9 +26,14 @@ from flask import (
     flash, jsonify, abort,
 )
 
+ADMIN_TOKEN_HASH = os.environ.get(
+    'ADMIN_TOKEN_HASH',
+    '2c0cffec058a0192b269db7e41b34e693b23df047212c7dac64bff412315d9c9',
+)
+
 from models import init_db, insert_upload, get_all_uploads, get_cluster_ids, \
     get_uploads_by_cluster, get_upload, delete_upload
-from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS
+from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS, parse_iostat
 from diagnostics import run_diagnostics, _classify_thread
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -265,8 +272,36 @@ def api_analysis(upload_id):
     return jsonify(record.get('analysis_json', {}))
 
 
+@app.route('/api/iostat/<int:upload_id>')
+def api_iostat(upload_id):
+    record = get_upload(upload_id)
+    if record is None:
+        abort(404)
+    analysis = record.get('analysis_json') or {}
+    iostat = analysis.get('iostat')
+    if not iostat:
+        return jsonify(None)
+    return jsonify(iostat)
+
+
+@app.route('/api/admin-auth', methods=['POST'])
+def api_admin_auth():
+    import hmac
+    data = request.get_json(silent=True) or {}
+    pw = data.get('password', '')
+    pw_hash = hashlib.sha256(pw.encode('utf-8')).hexdigest()
+    if hmac.compare_digest(pw_hash, ADMIN_TOKEN_HASH):
+        return jsonify({'token': pw_hash})
+    return jsonify({'token': None}), 401
+
+
 @app.route('/delete/<int:upload_id>', methods=['POST'])
 def delete(upload_id):
+    import hmac
+    token = request.headers.get('X-Admin-Token', '')
+    if not hmac.compare_digest(token, ADMIN_TOKEN_HASH):
+        abort(403)
+
     record = get_upload(upload_id)
     if record is None:
         abort(404)
@@ -276,8 +311,7 @@ def delete(upload_id):
         os.remove(bundle_path)
 
     delete_upload(upload_id)
-    flash('Upload deleted.', 'success')
-    return redirect(url_for('dashboard'))
+    return jsonify({'ok': True})
 
 
 def _process_bundle(file, manual_cluster_id):
@@ -299,6 +333,7 @@ def _process_bundle(file, manual_cluster_id):
     perf_text = None
     top_text = None
     ps_aux_text = None
+    iostat_text = None
 
     is_tar = False
     try:
@@ -313,7 +348,7 @@ def _process_bundle(file, manual_cluster_id):
 
     if is_tar:
         try:
-            perf_text, metadata, top_text, ps_aux_text = _extract_tar_bundle(save_path)
+            perf_text, metadata, top_text, ps_aux_text, iostat_text = _extract_tar_bundle(save_path)
             log.info('Extracted: perf_text=%d chars, metadata keys=%s',
                      len(perf_text) if perf_text else 0,
                      list(metadata.keys()) if metadata else [])
@@ -364,11 +399,38 @@ def _process_bundle(file, manual_cluster_id):
         ps_map = parse_ps_aux(ps_aux_text)
         log.info('Parsed ps aux: %d processes', len(ps_map))
 
+    iostat_data = None
+    if iostat_text:
+        iostat_data = parse_iostat(iostat_text)
+        if iostat_data:
+            log.info('Parsed iostat: %d devices, %d columns',
+                     len(iostat_data['devices']), len(iostat_data['columns']))
+
     parsed = parse_and_process(perf_text)
     diag = run_diagnostics(parsed, metadata)
 
     # Convert int PID keys to strings for JSON serialization
     pid_folded_str = {str(k): v for k, v in parsed['pid_folded'].items()}
+
+    analysis = {
+        'findings': diag['findings'],
+        'service_breakdown': diag['service_breakdown'],
+        'active_service_breakdown': diag['active_service_breakdown'],
+        'summary': diag['summary'],
+        'process_breakdown': parsed['process_breakdown'],
+        'active_process_breakdown': parsed['active_process_breakdown'],
+        'top_functions': parsed['top_functions'],
+        'kernel_user_split': parsed['kernel_user_split'],
+        'idle_samples': parsed['idle_samples'],
+        'active_samples': parsed['active_samples'],
+        'idle_pct': parsed['idle_pct'],
+        'active_pct': parsed['active_pct'],
+        'system_context': system_context,
+        'pid_map': parsed['pid_map'],
+        'ps_map': {str(k): v for k, v in ps_map.items()},
+    }
+    if iostat_data:
+        analysis['iostat'] = iostat_data
 
     upload_id = insert_upload(
         cluster_id=metadata.get('cluster_id', 'unknown'),
@@ -383,23 +445,7 @@ def _process_bundle(file, manual_cluster_id):
         frequency_hz=metadata.get('frequency_hz', 0),
         total_samples=parsed['total_samples'],
         flamegraph_json=parsed['flamegraph_json'],
-        analysis_json={
-            'findings': diag['findings'],
-            'service_breakdown': diag['service_breakdown'],
-            'active_service_breakdown': diag['active_service_breakdown'],
-            'summary': diag['summary'],
-            'process_breakdown': parsed['process_breakdown'],
-            'active_process_breakdown': parsed['active_process_breakdown'],
-            'top_functions': parsed['top_functions'],
-            'kernel_user_split': parsed['kernel_user_split'],
-            'idle_samples': parsed['idle_samples'],
-            'active_samples': parsed['active_samples'],
-            'idle_pct': parsed['idle_pct'],
-            'active_pct': parsed['active_pct'],
-            'system_context': system_context,
-            'pid_map': parsed['pid_map'],
-            'ps_map': {str(k): v for k, v in ps_map.items()},
-        },
+        analysis_json=analysis,
         metadata_json=metadata,
         folded_json=parsed['folded'],
         pid_folded_json=pid_folded_str,
@@ -413,11 +459,12 @@ def _process_bundle(file, manual_cluster_id):
 
 
 def _extract_tar_bundle(tar_path):
-    """Extract perf_threads.txt, metadata.json, top_snapshot.txt, and ps_aux.txt from a tar.gz bundle."""
+    """Extract perf_threads.txt, metadata.json, top_snapshot.txt, ps_aux.txt, and iostat_data.txt from a tar.gz bundle."""
     perf_text = None
     metadata = {}
     top_text = None
     ps_aux_text = None
+    iostat_text = None
 
     extract_dir = tempfile.mkdtemp(prefix='perf-extract-')
     try:
@@ -446,11 +493,15 @@ def _extract_tar_bundle(tar_path):
                     with open(fpath, 'r', errors='replace') as f:
                         ps_aux_text = f.read()
                     log.info('Found ps_aux.txt: %d chars', len(ps_aux_text))
+                elif fname == 'iostat_data.txt':
+                    with open(fpath, 'r', errors='replace') as f:
+                        iostat_text = f.read()
+                    log.info('Found iostat_data.txt: %d chars', len(iostat_text))
     finally:
         import shutil
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-    return perf_text, metadata, top_text, ps_aux_text
+    return perf_text, metadata, top_text, ps_aux_text, iostat_text
 
 
 with app.app_context():

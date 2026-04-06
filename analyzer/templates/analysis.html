@@ -5,6 +5,7 @@
 {% block head %}
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -49,7 +50,7 @@
         <span class="stat-label">Frequency</span>
     </div>
     <div class="summary-stat">
-        <span class="stat-value">{{ record.kernel_version or '?' }}</span>
+        <span class="stat-value stat-value-sm">{{ record.kernel_version or '?' }}</span>
         <span class="stat-label">Kernel</span>
     </div>
     {% if record.cpu_info %}
@@ -83,9 +84,7 @@
         <div class="context-card">
             <div class="context-label">CPU Split (from top)</div>
             <div class="context-value">
-                {{ ctx.cpu_us }}% us, {{ ctx.cpu_sy }}% sy
-                {% if ctx.cpu_wa %}, {{ ctx.cpu_wa }}% wa{% endif %}
-                {% if ctx.cpu_st %}, {{ ctx.cpu_st }}% st{% endif %}
+                {{ ctx.cpu_us }}% us, {{ ctx.cpu_sy }}% sy, {{ ctx.cpu_wa | default(0) }}% wa, {{ ctx.cpu_st | default(0) }}% st
             </div>
             <div class="context-detail">
                 {% if ctx.cpu_id is defined %}{{ ctx.cpu_id }}% idle{% endif %}
@@ -117,7 +116,12 @@
         <div class="context-card">
             <div class="context-label">Tasks</div>
             <div class="context-value">{{ ctx.tasks_total }} total</div>
-            <div class="context-detail">{{ ctx.tasks_running }} running</div>
+            <div class="context-detail">
+                {{ ctx.tasks_running }} running{% if ctx.tasks_zombie is defined %}, {{ ctx.tasks_zombie }} zombie{% endif %}
+                {% if ctx.tasks_zombie and ctx.tasks_zombie > 0 %}
+                <span class="context-badge context-badge-warn">zombies present</span>
+                {% endif %}
+            </div>
         </div>
         {% endif %}
 
@@ -231,29 +235,23 @@
     </div>
 </div>
 
-<!-- Findings & Recommendations -->
-{% if analysis and analysis.findings %}
-<div class="section-card">
-    <h2>Diagnostic Findings</h2>
-    <div class="findings-list">
-        {% for finding in analysis.findings %}
-        <div class="finding finding-{{ finding.severity }}">
-            <div class="finding-header">
-                <span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span>
-                <span class="finding-title">{{ finding.title }}</span>
-                <span class="finding-category">{{ finding.category }}</span>
-            </div>
-            <p class="finding-detail">{{ finding.detail }}</p>
-            {% if finding.recommendation %}
-            <div class="finding-recommendation">
-                <strong>Recommendation:</strong> {{ finding.recommendation }}
-            </div>
-            {% endif %}
+<!-- Disk I/O (iostat) -->
+<div class="section-card" id="iostat-section" style="display:none;">
+    <h2>Disk I/O (iostat)</h2>
+    <div class="iostat-controls">
+        <div class="iostat-control-group">
+            <label class="iostat-control-label">Columns:</label>
+            <div class="iostat-column-toggles" id="iostat-col-toggles"></div>
         </div>
-        {% endfor %}
+        <div class="iostat-control-group">
+            <label class="iostat-control-label">Devices:</label>
+            <div class="iostat-device-toggles" id="iostat-dev-toggles"></div>
+        </div>
+    </div>
+    <div class="iostat-chart-wrap">
+        <canvas id="iostat-chart"></canvas>
     </div>
 </div>
-{% endif %}
 
 <!-- CPU breakdown -->
 <div class="two-col">
@@ -824,6 +822,136 @@
     loadProcessList('thread');
     loadPidList();
     loadFlamegraph('');
+})();
+
+(function() {
+    var iostatUrl = '{{ url_for("api_iostat", upload_id=record.id) }}';
+    var DEFAULT_COLUMNS = ['%util'];
+    var SKIP_DEV_RE = /^(loop\d+|md\d+|scd\d+)$/i;
+    var PALETTE = [
+        '#4dc9f6','#f67019','#f53794','#537bc4','#acc236',
+        '#166a8f','#00a950','#58595b','#8549ba','#e6194b',
+        '#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
+        '#42d4f4','#f032e6','#bfef45','#fabed4','#469990'
+    ];
+
+    var ioChart = null;
+    var ioData = null;
+    var activeCols = {};
+    var activeDevs = {};
+
+    fetch(iostatUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data || !data.columns || !data.devices || !data.series) return;
+            ioData = data;
+            document.getElementById('iostat-section').style.display = '';
+            initControls();
+            renderChart();
+        });
+
+    function initControls() {
+        var colWrap = document.getElementById('iostat-col-toggles');
+        var devWrap = document.getElementById('iostat-dev-toggles');
+
+        ioData.columns.forEach(function(col) {
+            activeCols[col] = DEFAULT_COLUMNS.indexOf(col) >= 0;
+            var btn = document.createElement('button');
+            btn.className = 'iostat-toggle-btn' + (activeCols[col] ? ' active' : '');
+            btn.textContent = col;
+            btn.dataset.col = col;
+            btn.addEventListener('click', function() {
+                activeCols[col] = !activeCols[col];
+                this.classList.toggle('active', activeCols[col]);
+                renderChart();
+            });
+            colWrap.appendChild(btn);
+        });
+
+        ioData.devices.forEach(function(dev) {
+            if (SKIP_DEV_RE.test(dev)) return;
+            activeDevs[dev] = true;
+            var btn = document.createElement('button');
+            btn.className = 'iostat-toggle-btn active';
+            btn.textContent = dev;
+            btn.dataset.dev = dev;
+            btn.addEventListener('click', function() {
+                activeDevs[dev] = !activeDevs[dev];
+                this.classList.toggle('active', activeDevs[dev]);
+                renderChart();
+            });
+            devWrap.appendChild(btn);
+        });
+    }
+
+    function renderChart() {
+        var datasets = [];
+        var maxLen = 0;
+        var colorIdx = 0;
+
+        ioData.devices.forEach(function(dev) {
+            if (!activeDevs[dev]) return;
+            ioData.columns.forEach(function(col) {
+                if (!activeCols[col]) return;
+                var vals = ioData.series[dev][col];
+                if (vals.length > maxLen) maxLen = vals.length;
+                datasets.push({
+                    label: dev + ' ' + col,
+                    data: vals,
+                    borderColor: PALETTE[colorIdx % PALETTE.length],
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    tension: 0.2,
+                });
+                colorIdx++;
+            });
+        });
+
+        var labels = [];
+        for (var i = 0; i < maxLen; i++) labels.push(i);
+
+        if (ioChart) ioChart.destroy();
+
+        var ctx = document.getElementById('iostat-chart').getContext('2d');
+        ioChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 8,
+                            color: getComputedStyle(document.documentElement)
+                                       .getPropertyValue('--text-primary').trim() || '#e0e0e0'
+                        }
+                    },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Elapsed seconds',
+                                 color: getComputedStyle(document.documentElement)
+                                            .getPropertyValue('--text-secondary').trim() || '#aaa' },
+                        ticks: { color: getComputedStyle(document.documentElement)
+                                            .getPropertyValue('--text-secondary').trim() || '#aaa' },
+                        grid: { color: 'rgba(255,255,255,0.06)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: getComputedStyle(document.documentElement)
+                                            .getPropertyValue('--text-secondary').trim() || '#aaa' },
+                        grid: { color: 'rgba(255,255,255,0.06)' }
+                    }
+                }
+            }
+        });
+    }
 })();
 </script>
 {% endblock %}

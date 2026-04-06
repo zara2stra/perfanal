@@ -416,6 +416,13 @@ pre {
     font-size: 1.3rem;
     font-weight: 700;
     color: var(--text-bright);
+    overflow-wrap: break-word;
+    word-break: break-all;
+}
+
+.stat-value-sm {
+    font-size: 0.95rem;
+    font-weight: 600;
 }
 
 .stat-label {
@@ -1050,7 +1057,7 @@ details summary { cursor: pointer; }
     display: flex;
     align-items: center;
     gap: 0.45rem;
-    margin-left: 1.5rem;
+    margin-right: 0.5rem;
     cursor: pointer;
     user-select: none;
 }
@@ -1084,4 +1091,176 @@ details summary { cursor: pointer; }
 
 .light-theme .theme-toggle-thumb {
     transform: translateX(16px);
+}
+
+/* --- Clickable Dashboard Rows --- */
+
+.clickable-row {
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.clickable-row:hover {
+    background: rgba(78, 154, 245, 0.08) !important;
+}
+
+.light-theme .clickable-row:hover {
+    background: rgba(43, 125, 233, 0.08) !important;
+}
+
+/* --- Admin Mode --- */
+
+.admin-col {
+    display: none;
+}
+
+.admin-btn {
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-left: 0.5rem;
+}
+
+.admin-btn:hover {
+    color: var(--text-bright);
+    border-color: var(--text-muted);
+}
+
+.admin-btn-active {
+    background: var(--red);
+    color: #fff;
+    border-color: var(--red);
+}
+
+.admin-btn-active:hover {
+    background: var(--red-hover);
+    border-color: var(--red-hover);
+    color: #fff;
+}
+
+/* --- Admin Password Modal --- */
+
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.6);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.modal-visible {
+    display: flex;
+}
+
+.modal-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    width: 340px;
+    max-width: 90vw;
+}
+
+.modal-box h3 {
+    margin: 0 0 1rem;
+    color: var(--text-bright);
+    font-size: 1.1rem;
+}
+
+.modal-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.95rem;
+}
+
+.modal-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.modal-error {
+    display: none;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--red);
+    font-weight: 600;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+/* ── iostat chart ── */
+.iostat-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.iostat-control-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.iostat-control-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    min-width: 5rem;
+    padding-top: 0.35rem;
+    flex-shrink: 0;
+}
+
+.iostat-column-toggles,
+.iostat-device-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.iostat-toggle-btn {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.78rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.iostat-toggle-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.iostat-toggle-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.iostat-chart-wrap {
+    position: relative;
+    height: 400px;
 }

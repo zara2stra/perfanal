@@ -374,6 +374,9 @@ def parse_top_snapshot(text):
             if m:
                 result['tasks_total'] = int(m.group(1))
                 result['tasks_running'] = int(m.group(2))
+            mz = re.search(r'(\d+)\s+zombie', line)
+            if mz:
+                result['tasks_zombie'] = int(mz.group(1))
 
         # CPU: "%Cpu(s): 29.0 us, 13.8 sy, 1.4 ni, 54.5 id, 0.7 wa, 0.0 hi, 0.7 si, 0.0 st"
         if '%Cpu' in line:
@@ -551,6 +554,102 @@ def _parse_ps_aux_format(lines):
             'cmd': parts[10],
         }
     return result
+
+
+_IOSTAT_SKIP_RE = re.compile(r'^(loop\d+|md\d+|scd\d+)$', re.IGNORECASE)
+
+
+def parse_iostat(text):
+    """
+    Parse `iostat -dxy 1` output into structured per-device time series.
+
+    Handles the fact that iostat omits devices with zero activity in a given
+    report.  Missing seconds are filled with 0.0 so every device has an array
+    of the same length aligned to the same time axis.
+
+    Filters out virtual/noise devices: loop*, md*, scd*.
+
+    Returns: {
+        'columns': ['r/s', 'wkB/s', '%util', ...],
+        'devices': ['sda', 'sdb', ...],
+        'series': {
+            'sda': { 'r/s': [0.0, 1.2, ...], 'wkB/s': [...], ... },
+            ...
+        }
+    }
+    """
+    if not text or not text.strip():
+        return None
+
+    blocks = re.split(r'\n\s*\n', text.strip())
+    if not blocks:
+        return None
+
+    columns = []
+    # Each element = dict of { dev: { col: value } } for that 1-second tick
+    ticks = []
+
+    for block in blocks:
+        lines = [l for l in block.strip().splitlines() if l.strip()]
+        if not lines:
+            continue
+
+        data_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('Device'):
+                if not columns:
+                    columns = stripped.split()[1:]
+                continue
+            if stripped.startswith('Linux') or stripped.startswith('avg-cpu'):
+                continue
+            data_lines.append(stripped)
+
+        if not data_lines or not columns:
+            continue
+
+        tick = {}
+        for dl in data_lines:
+            parts = dl.split()
+            if len(parts) < 2:
+                continue
+            dev = parts[0]
+            if _IOSTAT_SKIP_RE.match(dev):
+                continue
+            vals = parts[1:]
+            row = {}
+            for j, col in enumerate(columns):
+                try:
+                    row[col] = float(vals[j]) if j < len(vals) else 0.0
+                except (ValueError, IndexError):
+                    row[col] = 0.0
+            tick[dev] = row
+        if tick:
+            ticks.append(tick)
+
+    if not columns or not ticks:
+        return None
+
+    all_devices = []
+    seen = set()
+    for tick in ticks:
+        for dev in tick:
+            if dev not in seen:
+                seen.add(dev)
+                all_devices.append(dev)
+
+    series = {dev: {col: [] for col in columns} for dev in all_devices}
+    for tick in ticks:
+        for dev in all_devices:
+            row = tick.get(dev)
+            for col in columns:
+                series[dev][col].append(row[col] if row else 0.0)
+
+    return {
+        'columns': columns,
+        'devices': all_devices,
+        'series': series,
+    }
 
 
 def parse_and_process(perf_script_text):

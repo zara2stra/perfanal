@@ -17,13 +17,14 @@
                 <span class="brand-icon">&#9632;</span> Perf Flame Analyzer
             </a>
             <div class="nav-links">
-                <a href="{{ url_for('dashboard') }}">Dashboard</a>
-                <a href="{{ url_for('upload') }}">Upload</a>
                 <label class="theme-toggle" id="theme-toggle" title="Toggle light/dark theme">
                     <span class="theme-toggle-icon" id="theme-icon-dark">&#9790;</span>
                     <span class="theme-toggle-track"><span class="theme-toggle-thumb"></span></span>
                     <span class="theme-toggle-icon" id="theme-icon-light">&#9728;</span>
                 </label>
+                <a href="{{ url_for('dashboard') }}">Dashboard</a>
+                <a href="{{ url_for('upload') }}">Upload</a>
+                <button class="admin-btn" id="admin-btn" title="Toggle admin mode">Admin</button>
             </div>
         </div>
     </nav>
@@ -46,6 +47,18 @@
         <div class="footer-inner">Perf Flame Analyzer &mdash; Nutanix CVM Performance Diagnostics<br>Created by Sergei Ivanov (sergei.ivanov@nutanix.com)</div>
     </footer>
 
+    <div class="modal-overlay" id="admin-modal">
+        <div class="modal-box">
+            <h3>Admin Password</h3>
+            <input type="password" id="admin-pw" class="modal-input" placeholder="Enter password..." autocomplete="off">
+            <div class="modal-error" id="admin-error">Incorrect password.</div>
+            <div class="modal-actions">
+                <button class="btn btn-sm" id="admin-cancel">Cancel</button>
+                <button class="btn btn-sm btn-primary" id="admin-submit">Unlock</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     (function() {
         var root = document.documentElement;
@@ -53,6 +66,78 @@
             root.classList.toggle('light-theme');
             localStorage.setItem('theme', root.classList.contains('light-theme') ? 'light' : 'dark');
         });
+
+        var adminBtn = document.getElementById('admin-btn');
+        var modal = document.getElementById('admin-modal');
+        var pwInput = document.getElementById('admin-pw');
+        var errorEl = document.getElementById('admin-error');
+        var cancelBtn = document.getElementById('admin-cancel');
+        var submitBtn = document.getElementById('admin-submit');
+
+        function syncAdminBtn() {
+            var active = !!sessionStorage.getItem('adminToken');
+            adminBtn.classList.toggle('admin-btn-active', active);
+            adminBtn.textContent = active ? 'Admin (on)' : 'Admin';
+        }
+
+        function openModal() {
+            pwInput.value = '';
+            errorEl.style.display = 'none';
+            modal.classList.add('modal-visible');
+            pwInput.focus();
+        }
+
+        function closeModal() {
+            modal.classList.remove('modal-visible');
+        }
+
+        function tryUnlock() {
+            var pw = pwInput.value;
+            if (!pw) { errorEl.textContent = 'Please enter a password.'; errorEl.style.display = 'block'; return; }
+            submitBtn.disabled = true;
+            fetch('{{ url_for("api_admin_auth") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({password: pw})
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                submitBtn.disabled = false;
+                if (data.token) {
+                    sessionStorage.setItem('adminToken', data.token);
+                    syncAdminBtn();
+                    window.dispatchEvent(new Event('adminModeChanged'));
+                    closeModal();
+                } else {
+                    errorEl.textContent = 'Incorrect password.';
+                    errorEl.style.display = 'block';
+                    pwInput.value = '';
+                    pwInput.focus();
+                }
+            })
+            .catch(function() {
+                submitBtn.disabled = false;
+                errorEl.textContent = 'Server error. Try again.';
+                errorEl.style.display = 'block';
+            });
+        }
+
+        adminBtn.addEventListener('click', function() {
+            if (sessionStorage.getItem('adminToken')) {
+                sessionStorage.removeItem('adminToken');
+                syncAdminBtn();
+                window.dispatchEvent(new Event('adminModeChanged'));
+                return;
+            }
+            openModal();
+        });
+
+        submitBtn.addEventListener('click', tryUnlock);
+        cancelBtn.addEventListener('click', closeModal);
+        pwInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') tryUnlock(); });
+        modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
+
+        syncAdminBtn();
     })();
     </script>
     {% block scripts %}{% endblock %}

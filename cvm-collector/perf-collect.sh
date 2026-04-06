@@ -72,7 +72,12 @@ PERF_BIN="${WORK_DIR}/perf.data"
 # Always capture system-wide with cpu-clock; filtering happens in the analyzer.
 EVENT="cpu-clock"
 
-echo "[1/6] Recording perf data (${DURATION}s, event=${EVENT})..."
+echo "[1/7] Starting iostat sampling (1s intervals)..."
+iostat -dxy 1 > "${WORK_DIR}/iostat_data.txt" 2>/dev/null &
+IOSTAT_PID=$!
+echo "       iostat PID: $IOSTAT_PID"
+
+echo "[2/7] Recording perf data (${DURATION}s, event=${EVENT})..."
 
 # Use --call-graph dwarf for accurate userspace stack unwinding.
 # The default -g uses frame-pointer unwinding which fails on optimized
@@ -98,7 +103,11 @@ fi
 
 echo "       perf.data size: $(du -h "$PERF_BIN" | cut -f1)"
 
-echo "[2/6] Generating perf script output..."
+kill "$IOSTAT_PID" 2>/dev/null || true
+wait "$IOSTAT_PID" 2>/dev/null || true
+echo "       iostat samples collected: $(grep -c '^[a-zA-Z]' "${WORK_DIR}/iostat_data.txt" 2>/dev/null || echo 0) device-rows"
+
+echo "[3/7] Generating perf script output..."
 sudo perf script -i "$PERF_BIN" > "${WORK_DIR}/perf_threads.txt" 2>"${WORK_DIR}/perf_script.log"
 
 PERF_THREADS_SIZE=$(stat -c%s "${WORK_DIR}/perf_threads.txt" 2>/dev/null || stat -f%z "${WORK_DIR}/perf_threads.txt" 2>/dev/null || echo "0")
@@ -129,7 +138,7 @@ if [[ "$PERF_THREADS_SIZE" -eq 0 ]]; then
     fi
 fi
 
-echo "[3/6] Collecting system metadata..."
+echo "[4/7] Collecting system metadata..."
 
 python3 - "$CLUSTER_ID" "$HOSTNAME_SHORT" "$TIMESTAMP" "$DURATION" "$FREQUENCY" "${WORK_DIR}/metadata.json" <<'PYEOF'
 import json, platform, os, sys, subprocess
@@ -199,15 +208,15 @@ with open(output_path, "w") as f:
     json.dump(meta, f, indent=2)
 PYEOF
 
-echo "[4/6] Capturing top snapshot..."
+echo "[5/7] Capturing top snapshot..."
 top -bcn1 -w 512 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || \
     top -bn1 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || true
 
-echo "[5/6] Capturing ps snapshot..."
+echo "[6/7] Capturing ps snapshot..."
 ps -eo user,pid,ppid,%cpu,%mem,stat,args --no-headers ww > "${WORK_DIR}/ps_aux.txt" 2>/dev/null || \
     ps auxww > "${WORK_DIR}/ps_aux.txt" 2>/dev/null || true
 
-echo "[6/6] Packaging bundle..."
+echo "[7/7] Packaging bundle..."
 sudo rm -f "$PERF_BIN"
 
 BUNDLE_PATH="${OUTPUT_DIR}/${BUNDLE_NAME}.tar.gz"
