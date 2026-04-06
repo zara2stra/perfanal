@@ -1,4 +1,10 @@
 #!/bin/bash
+#
+# Author: sergei.ivanov@nutanix.com
+#
+# Collect perf profiling data on a Nutanix CVM or FSVM and package it for analysis.
+# Also works on regular Linux machines.
+#
 set -euo pipefail
 
 DURATION=10
