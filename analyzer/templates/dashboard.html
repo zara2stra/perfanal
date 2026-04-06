@@ -47,7 +47,7 @@
                 <td>{{ u.hostname or '-' }}</td>
                 <td>{{ u.collection_timestamp or '-' }}</td>
                 <td>{{ u.upload_timestamp }}</td>
-                <td><code>{{ u.kernel_version or '-' }}</code></td>
+                <td><code class="kernel-cell" title="{{ u.kernel_version or '' }}">{{ u.kernel_version or '-' }}</code></td>
                 <td>{{ u.total_samples or 0 }}</td>
                 <td>{{ u.duration_seconds or '-' }}s @ {{ u.frequency_hz or '-' }}Hz</td>
                 <td class="admin-col">

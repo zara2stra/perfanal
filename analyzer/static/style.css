@@ -1110,6 +1110,17 @@ details summary { cursor: pointer; }
 
 /* --- Admin Mode --- */
 
+/* --- Dashboard table tweaks --- */
+
+.kernel-cell {
+    display: inline-block;
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
 .admin-col {
     display: none;
 }
