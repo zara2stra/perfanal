@@ -49,6 +49,102 @@ mkdir -p "$OUTPUT_DIR"
 export TMPDIR="$OUTPUT_DIR"
 
 HOSTNAME_SHORT=$(hostname -s)
+
+# ── Platform detection ──
+
+version_ge() {
+    # Returns 0 (true) if $1 >= $2, using sort -V for version comparison
+    printf '%s\n%s' "$2" "$1" | sort -V -C
+}
+
+HAS_ZFS=false
+if command -v zfs &>/dev/null; then
+    HAS_ZFS=true
+fi
+
+HAS_PERF=false
+if command -v perf &>/dev/null; then
+    HAS_PERF=true
+fi
+
+HOSTNAME_UPPER=$(echo "$HOSTNAME_SHORT" | tr '[:lower:]' '[:upper:]')
+
+MACHINE_TYPE="Linux"
+if [[ "$HOSTNAME_UPPER" == *FSVM* ]]; then
+    MACHINE_TYPE="FSVM"
+elif [[ "$HOSTNAME_UPPER" == *CVM* ]]; then
+    if [[ "$HAS_ZFS" == "false" ]]; then
+        MACHINE_TYPE="CVM"
+    else
+        MACHINE_TYPE="FSVM"
+    fi
+fi
+
+# ── Perf availability verification ──
+
+if [[ "$HAS_PERF" == "false" ]]; then
+    case "$MACHINE_TYPE" in
+        CVM)
+            echo "ERROR: perf is expected on a CVM but was not found."
+            echo "       This is unexpected. Investigate the system or install the perf package."
+            exit 1
+            ;;
+        Linux)
+            echo "ERROR: perf is not installed on this machine."
+            echo "       Install the perf package (e.g. 'yum install perf' or 'apt install linux-tools-\$(uname -r)') and re-run."
+            exit 1
+            ;;
+        FSVM)
+            AFS_VER=""
+            AFS_VER_RAW=$(afs version 2>/dev/null || true)
+            if [[ -n "$AFS_VER_RAW" ]]; then
+                AFS_VER=$(echo "$AFS_VER_RAW" | grep -oP '\d+\.\d+(\.\d+)?' | head -1)
+            fi
+
+            if [[ -z "$AFS_VER" ]]; then
+                echo "ERROR: perf is not installed and could not determine AFS version."
+                echo "       Install the perf package manually and re-run."
+                exit 1
+            fi
+
+            echo "Detected FSVM with AFS version $AFS_VER (perf not installed)"
+
+            if ! version_ge "$AFS_VER" "5.2.1"; then
+                echo "ERROR: AFS version $AFS_VER is older than 5.2.1."
+                echo "       Automated perf installation is not available for this version."
+                echo "       Obtain and install the perf RPM manually, then re-run."
+                exit 1
+            fi
+
+            if ! sudo test -f /root/sretools/sreinstall.sh; then
+                echo "ERROR: perf is not installed and /root/sretools/sreinstall.sh was not found."
+                echo "       Install the perf package manually and re-run."
+                exit 1
+            fi
+
+            echo ""
+            read -r -p "perf is not installed. Install it via /root/sretools/sreinstall.sh? [y/N] " REPLY
+            if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
+                echo "Aborted by user."
+                exit 1
+            fi
+
+            echo "Running sreinstall.sh..."
+            sudo bash /root/sretools/sreinstall.sh
+
+            if ! command -v perf &>/dev/null; then
+                echo "ERROR: perf is still not available after running sreinstall.sh."
+                echo "       Install the perf package manually and re-run."
+                exit 1
+            fi
+            HAS_PERF=true
+            echo "perf installed successfully."
+            ;;
+    esac
+fi
+
+# ── Set up working directory ──
+
 TIMESTAMP=$(date +'%Y-%m-%d-%H-%M-%S')
 BUNDLE_NAME="perf-bundle-${CLUSTER_ID}-${HOSTNAME_SHORT}-${TIMESTAMP}"
 WORK_DIR="${OUTPUT_DIR}/${BUNDLE_NAME}"
@@ -59,6 +155,7 @@ trap 'sudo rm -rf "$WORK_DIR"' EXIT
 echo "=== Perf Collector ==="
 echo "Cluster ID : $CLUSTER_ID"
 echo "Hostname   : $HOSTNAME_SHORT"
+echo "Machine    : $MACHINE_TYPE"
 echo "Duration   : ${DURATION}s"
 echo "Frequency  : ${FREQUENCY} Hz"
 echo "Mode       : system-wide"
@@ -140,15 +237,16 @@ fi
 
 echo "[4/7] Collecting system metadata..."
 
-python3 - "$CLUSTER_ID" "$HOSTNAME_SHORT" "$TIMESTAMP" "$DURATION" "$FREQUENCY" "${WORK_DIR}/metadata.json" <<'PYEOF'
+python3 - "$CLUSTER_ID" "$HOSTNAME_SHORT" "$TIMESTAMP" "$DURATION" "$FREQUENCY" "$MACHINE_TYPE" "${WORK_DIR}/metadata.json" <<'PYEOF'
 import json, platform, os, sys, subprocess
 
-cluster_id  = sys.argv[1]
-hostname    = sys.argv[2]
-timestamp   = sys.argv[3]
-duration    = int(sys.argv[4])
-frequency   = int(sys.argv[5])
-output_path = sys.argv[6]
+cluster_id    = sys.argv[1]
+hostname      = sys.argv[2]
+timestamp     = sys.argv[3]
+duration      = int(sys.argv[4])
+frequency     = int(sys.argv[5])
+machine_type  = sys.argv[6]
+output_path   = sys.argv[7]
 
 cpu_info = "unknown"
 try:
@@ -194,6 +292,7 @@ for svc in svc_names:
 meta = {
     "cluster_id": cluster_id,
     "hostname": hostname,
+    "machine_type": machine_type,
     "collection_timestamp": timestamp,
     "duration_seconds": duration,
     "frequency_hz": frequency,
