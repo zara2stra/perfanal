@@ -556,7 +556,7 @@ def _parse_ps_aux_format(lines):
     return result
 
 
-_IOSTAT_SKIP_RE = re.compile(r'^(loop\d+|md\d+|scd\d+)$', re.IGNORECASE)
+_IOSTAT_SKIP_RE = re.compile(r'^(loop\d+|md\d+|scd\d+|dm-.+)$', re.IGNORECASE)
 
 
 def parse_iostat(text):

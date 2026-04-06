@@ -827,7 +827,7 @@
 (function() {
     var iostatUrl = '{{ url_for("api_iostat", upload_id=record.id) }}';
     var DEFAULT_COLUMNS = ['%util'];
-    var SKIP_DEV_RE = /^(loop\d+|md\d+|scd\d+)$/i;
+    var SKIP_DEV_RE = /^(loop\d+|md\d+|scd\d+|dm-.+)$/i;
     var PALETTE = [
         '#4dc9f6','#f67019','#f53794','#537bc4','#acc236',
         '#166a8f','#00a950','#58595b','#8549ba','#e6194b',
@@ -868,6 +868,7 @@
             colWrap.appendChild(btn);
         });
 
+        var devButtons = [];
         ioData.devices.forEach(function(dev) {
             if (SKIP_DEV_RE.test(dev)) return;
             activeDevs[dev] = true;
@@ -880,8 +881,26 @@
                 this.classList.toggle('active', activeDevs[dev]);
                 renderChart();
             });
+            btn.addEventListener('dblclick', function() {
+                var anyActive = Object.keys(activeDevs).some(function(d) { return activeDevs[d]; });
+                if (anyActive) {
+                    Object.keys(activeDevs).forEach(function(d) { activeDevs[d] = false; });
+                    activeDevs[dev] = true;
+                } else {
+                    Object.keys(activeDevs).forEach(function(d) { activeDevs[d] = true; });
+                }
+                syncDevButtons();
+                renderChart();
+            });
             devWrap.appendChild(btn);
+            devButtons.push(btn);
         });
+
+        function syncDevButtons() {
+            devButtons.forEach(function(b) {
+                b.classList.toggle('active', !!activeDevs[b.dataset.dev]);
+            });
+        }
     }
 
     function renderChart() {
