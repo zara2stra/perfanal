@@ -22,6 +22,18 @@
     --radius-lg:   10px;
 }
 
+.light-theme {
+    --bg:          #f0f2f5;
+    --bg-card:     #ffffff;
+    --bg-elevated: #e8eaef;
+    --border:      #d0d4dc;
+    --text:        #2c3040;
+    --text-muted:  #5f6578;
+    --text-bright: #1a1d27;
+    --accent:      #2b7de9;
+    --accent-hover:#1a64c6;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 
 html { font-size: 14px; }
@@ -1010,4 +1022,66 @@ details summary { cursor: pointer; }
     color: var(--text-muted);
     font-size: 0.8rem;
     margin-top: auto;
+}
+
+/* --- Light Theme Overrides (semi-transparent / hardcoded colors) --- */
+
+.light-theme .flash-success { background: rgba(61, 220, 132, 0.10); border-color: rgba(61, 220, 132, 0.35); }
+.light-theme .flash-error   { background: rgba(244, 67, 54, 0.08); border-color: rgba(244, 67, 54, 0.3); }
+.light-theme .analysis-summary { background: rgba(43, 125, 233, 0.07); border-color: rgba(43, 125, 233, 0.2); }
+.light-theme .finding-recommendation { background: rgba(43, 125, 233, 0.05); border-color: rgba(43, 125, 233, 0.15); }
+.light-theme .data-table tbody tr:hover { background: rgba(43, 125, 233, 0.06); }
+.light-theme .pid-row:hover { background: rgba(43, 125, 233, 0.08) !important; }
+.light-theme .pid-row-active { background: rgba(43, 125, 233, 0.12) !important; }
+.light-theme .cluster-tag { background: rgba(43, 125, 233, 0.12); }
+.light-theme .drop-zone:hover,
+.light-theme .drop-zone.drag-over { background: rgba(43, 125, 233, 0.04); }
+.light-theme .drop-zone-file { background: rgba(43, 125, 233, 0.08); }
+.light-theme .fg-filter-info { background: rgba(43, 125, 233, 0.06); border-color: rgba(43, 125, 233, 0.18); }
+.light-theme .pid-service-tag { background: rgba(61, 220, 132, 0.10); }
+.light-theme .d3-flame-graph rect { stroke: var(--bg-card); }
+.light-theme .severity-critical { background: var(--red); }
+.light-theme .severity-warning  { background: var(--orange); }
+.light-theme .severity-info     { background: var(--accent); }
+
+/* --- Theme Toggle Switch --- */
+
+.theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-left: 1.5rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.theme-toggle-icon {
+    font-size: 1rem;
+    line-height: 1;
+    transition: opacity 0.2s;
+}
+
+.theme-toggle-track {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: background 0.25s, border-color 0.25s;
+}
+
+.theme-toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 50%;
+    transition: transform 0.25s;
+}
+
+.light-theme .theme-toggle-thumb {
+    transform: translateX(16px);
 }
