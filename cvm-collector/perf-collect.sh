@@ -76,7 +76,9 @@ fi
 HOSTNAME_UPPER=$(echo "$HOSTNAME_SHORT" | tr '[:lower:]' '[:upper:]')
 
 MACHINE_TYPE="Linux"
-if [[ "$HOSTNAME_UPPER" == *FSVM* ]]; then
+if [[ -f /etc/nutanix/pc-marker || -f /etc/nutanix/pcvm-version ]]; then
+    MACHINE_TYPE="PCVM"
+elif [[ "$HOSTNAME_UPPER" == *FSVM* ]]; then
     MACHINE_TYPE="FSVM"
 elif [[ "$HOSTNAME_UPPER" == *CVM* ]]; then
     if [[ "$HAS_ZFS" == "false" ]]; then
@@ -84,13 +86,19 @@ elif [[ "$HOSTNAME_UPPER" == *CVM* ]]; then
     else
         MACHINE_TYPE="FSVM"
     fi
+elif [[ -d /etc/nutanix ]]; then
+    if [[ "$HAS_ZFS" == "true" ]]; then
+        MACHINE_TYPE="FSVM"
+    else
+        MACHINE_TYPE="CVM"
+    fi
 fi
 
 # ── Perf availability verification ──
 
 if [[ "$HAS_PERF" == "false" ]]; then
     case "$MACHINE_TYPE" in
-        CVM)
+        CVM|PCVM)
             echo "ERROR: perf is expected on a CVM but was not found."
             echo "       This is unexpected. Investigate the system or install the perf package."
             exit 1

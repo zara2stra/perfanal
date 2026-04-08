@@ -42,12 +42,12 @@
     </div>
     {% endif %}
     <div class="summary-stat">
-        <span class="stat-value">{{ record.duration_seconds or '?' }}s</span>
-        <span class="stat-label">Duration</span>
+        <span class="stat-value">{{ record.duration_seconds or '?' }}s @ {{ record.frequency_hz or '?' }} Hz</span>
+        <span class="stat-label">Duration / Frequency</span>
     </div>
     <div class="summary-stat">
-        <span class="stat-value">{{ record.frequency_hz or '?' }} Hz</span>
-        <span class="stat-label">Frequency</span>
+        <span class="stat-value stat-value-sm">{{ meta.get('machine_type', 'Linux') if meta else 'Linux' }}</span>
+        <span class="stat-label">Machine Type</span>
     </div>
     <div class="summary-stat">
         <span class="stat-value stat-value-sm">{{ record.kernel_version or '?' }}</span>
