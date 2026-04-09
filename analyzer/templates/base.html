@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Perf Flame Analyzer{% endblock %}</title>
+    <title>{% block title %}FlamePerf Linux Analyzer{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" type="text/css"
           href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css" />
@@ -14,7 +14,7 @@
     <nav class="topnav">
         <div class="nav-inner">
             <a href="{{ url_for('dashboard') }}" class="nav-brand">
-                <span class="brand-icon">&#9632;</span> Perf Flame Analyzer
+                <img src="{{ url_for('static', filename='tux.png') }}" alt="Tux" class="brand-logo"> FlamePerf Linux Analyzer
             </a>
             <div class="nav-links">
                 <label class="theme-toggle" id="theme-toggle" title="Toggle light/dark theme">
@@ -45,7 +45,7 @@
     </main>
 
     <footer class="footer">
-        <div class="footer-inner">Perf Flame Analyzer &mdash; Nutanix CVM Performance Diagnostics<br>Created by Sergei Ivanov (sergei.ivanov@nutanix.com)</div>
+        <div class="footer-inner">FlamePerf Linux Analyzer &mdash; Nutanix CVM Performance Diagnostics<br>Created by Sergei Ivanov (sergei.ivanov@nutanix.com)</div>
     </footer>
 
     <div class="modal-overlay" id="admin-modal">

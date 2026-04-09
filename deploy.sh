@@ -2,7 +2,7 @@
 set -euo pipefail
 
 #
-# Deploy Perf Flame Analyzer to Rocky Linux 9 VM
+# Deploy FlamePerf Linux Analyzer to Rocky Linux 9 VM
 #
 # Usage: ./deploy.sh [--target user@host] [--rebuild]
 #
@@ -17,7 +17,7 @@ REMOTE_COLLECTOR="/perfanal/cvm-collector"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "============================================"
-echo " Perf Flame Analyzer - Deployment"
+echo " FlamePerf Linux Analyzer - Deployment"
 echo "============================================"
 echo " Target : $TARGET"
 echo " App dir: $REMOTE_BASE"
@@ -50,6 +50,7 @@ scp -q "${SCRIPT_DIR}/analyzer/parser.py"          "${TARGET}:${REMOTE_BASE}/"
 scp -q "${SCRIPT_DIR}/analyzer/diagnostics.py"     "${TARGET}:${REMOTE_BASE}/"
 scp -q "${SCRIPT_DIR}/analyzer/models.py"          "${TARGET}:${REMOTE_BASE}/"
 scp -q "${SCRIPT_DIR}/analyzer/static/style.css"   "${TARGET}:${REMOTE_BASE}/static/"
+scp -q "${SCRIPT_DIR}/analyzer/static/tux.png"    "${TARGET}:${REMOTE_BASE}/static/"
 scp -q "${SCRIPT_DIR}/analyzer/templates/base.html"       "${TARGET}:${REMOTE_BASE}/templates/"
 scp -q "${SCRIPT_DIR}/analyzer/templates/dashboard.html"   "${TARGET}:${REMOTE_BASE}/templates/"
 scp -q "${SCRIPT_DIR}/analyzer/templates/upload.html"      "${TARGET}:${REMOTE_BASE}/templates/"
@@ -102,7 +103,7 @@ run_remote "firewall-cmd --query-port=8080/tcp >/dev/null 2>&1 && echo '  Port 8
 
 run_remote "cat > /etc/systemd/system/perf-analyzer.service << 'UNIT'
 [Unit]
-Description=Perf Flame Analyzer Container
+Description=FlamePerf Linux Analyzer Container
 After=network-online.target
 Wants=network-online.target
 

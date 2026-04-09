@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Analysis #{{ record.id }} - Perf Flame Analyzer{% endblock %}
+{% block title %}Analysis #{{ record.id }} - FlamePerf Linux Analyzer{% endblock %}
 
 {% block head %}
 <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -137,31 +137,31 @@
     <details class="top-procs-details" open>
         <summary>Top processes at capture time (top -c)</summary>
         <div class="top-procs-wrap">
-            <table class="data-table compact">
+            <table class="data-table compact" id="top-procs-table">
                 <thead>
                     <tr>
-                        <th>PID</th>
-                        <th>User</th>
-                        <th class="col-right">%CPU</th>
-                        <th class="col-right">%MEM</th>
-                        <th class="col-right">VIRT</th>
-                        <th class="col-right">RES</th>
-                        <th>S</th>
-                        <th>TIME+</th>
+                        <th class="top-col-sortable sort-asc" data-col="0" data-type="num">PID</th>
+                        <th class="top-col-sortable" data-col="1" data-type="str">User</th>
+                        <th class="top-col-sortable col-right" data-col="2" data-type="num">%CPU</th>
+                        <th class="top-col-sortable col-right" data-col="3" data-type="num">%MEM</th>
+                        <th class="top-col-sortable col-right" data-col="4" data-type="mem">VIRT</th>
+                        <th class="top-col-sortable col-right" data-col="5" data-type="mem">RES</th>
+                        <th class="top-col-sortable" data-col="6" data-type="str">S</th>
+                        <th class="top-col-sortable" data-col="7" data-type="str">TIME+</th>
                         <th>Command</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for p in ctx.top_processes %}
                     <tr>
-                        <td><code>{{ p.pid }}</code></td>
-                        <td>{{ p.user }}</td>
-                        <td class="col-right {% if p.cpu_pct > 50 %}text-hot{% elif p.cpu_pct > 10 %}text-warm{% endif %}">{{ p.cpu_pct }}</td>
-                        <td class="col-right {% if p.mem_pct > 50 %}text-hot{% elif p.mem_pct > 10 %}text-warm{% endif %}">{{ p.mem_pct }}</td>
-                        <td class="col-right">{{ p.virt or '' }}</td>
-                        <td class="col-right">{{ p.res or '' }}</td>
-                        <td>{{ p.state or '' }}</td>
-                        <td><code>{{ p.time or '' }}</code></td>
+                        <td data-sv="{{ p.pid }}"><code>{{ p.pid }}</code></td>
+                        <td data-sv="{{ p.user }}">{{ p.user }}</td>
+                        <td data-sv="{{ p.cpu_pct }}" class="col-right {% if p.cpu_pct > 50 %}text-hot{% elif p.cpu_pct > 10 %}text-warm{% endif %}">{{ p.cpu_pct }}</td>
+                        <td data-sv="{{ p.mem_pct }}" class="col-right {% if p.mem_pct > 50 %}text-hot{% elif p.mem_pct > 10 %}text-warm{% endif %}">{{ p.mem_pct }}</td>
+                        <td data-sv="{{ p.virt or '' }}" class="col-right">{{ p.virt or '' }}</td>
+                        <td data-sv="{{ p.res or '' }}" class="col-right">{{ p.res or '' }}</td>
+                        <td data-sv="{{ p.state or '' }}">{{ p.state or '' }}</td>
+                        <td data-sv="{{ p.time or '' }}"><code>{{ p.time or '' }}</code></td>
                         <td><code class="top-cmd">{{ p.command }}</code></td>
                     </tr>
                     {% endfor %}
@@ -250,6 +250,56 @@
     </div>
     <div class="iostat-chart-wrap">
         <canvas id="iostat-chart"></canvas>
+    </div>
+</div>
+
+<!-- Process I/O (iotop) -->
+<div class="section-card" id="iotop-section" style="display:none;">
+    <h2>Process I/O (iotop)</h2>
+    <div class="iostat-controls">
+        <div class="iostat-control-group">
+            <label class="iostat-control-label">Throughput:</label>
+            <div class="view-toggle" id="iotop-mode-toggle">
+                <button class="toggle-btn active" data-val="total">Total</button>
+                <button class="toggle-btn" data-val="actual">Actual</button>
+            </div>
+        </div>
+    </div>
+    <div class="iostat-chart-wrap">
+        <canvas id="iotop-chart"></canvas>
+    </div>
+    <div class="iostat-controls" style="margin-top:0.5rem;">
+        <div class="iostat-control-group">
+            <label class="iostat-control-label">Group by:</label>
+            <div class="view-toggle" id="iotop-id-toggle">
+                <button class="toggle-btn active" data-val="tid">Thread (TID)</button>
+                <button class="toggle-btn" data-val="pid">Process (PID)</button>
+            </div>
+        </div>
+    </div>
+    <div class="iotop-time-nav">
+        <button class="btn btn-sm" id="iotop-prev" title="Previous second">&lsaquo;</button>
+        <span id="iotop-time-label">Second 1 of 1</span>
+        <button class="btn btn-sm" id="iotop-next" title="Next second">&rsaquo;</button>
+    </div>
+    <div class="top-procs-wrap">
+        <table class="data-table compact" id="iotop-table">
+            <thead>
+                <tr>
+                    <th class="pid-col-sortable" data-sort="tid" id="iotop-id-col">TID</th>
+                    <th class="pid-col-sortable" data-sort="prio">Priority</th>
+                    <th class="pid-col-sortable" data-sort="user">User</th>
+                    <th class="pid-col-sortable col-right" data-sort="read_bps">Disk Read</th>
+                    <th class="pid-col-sortable col-right" data-sort="write_bps">Disk Write</th>
+                    <th class="pid-col-sortable col-right" data-sort="swapin_pct">SwapIn%</th>
+                    <th class="pid-col-sortable col-right sort-desc" data-sort="io_pct">IO%</th>
+                    <th>Command</th>
+                </tr>
+            </thead>
+            <tbody id="iotop-tbody">
+                <tr><td colspan="8" class="empty-state">No data</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -427,6 +477,59 @@
 
 {% block scripts %}
 <script>
+(function() {
+    var table = document.getElementById('top-procs-table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var headers = table.querySelectorAll('.top-col-sortable');
+    var curCol = 0, curAsc = true;
+
+    function memToBytes(s) {
+        if (!s) return 0;
+        s = s.toString().trim().toLowerCase();
+        var m = s.match(/^([\d.]+)\s*([kmgtp]?)i?$/);
+        if (!m) { var n = parseFloat(s); return isNaN(n) ? 0 : n; }
+        var v = parseFloat(m[1]);
+        var u = m[2];
+        var mult = { '': 1, 'k': 1024, 'm': 1024*1024, 'g': 1024*1024*1024, 't': 1024*1024*1024*1024 };
+        return v * (mult[u] || 1);
+    }
+
+    function sortTable(colIdx, type, asc) {
+        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+        var dir = asc ? 1 : -1;
+        rows.sort(function(a, b) {
+            var ca = a.cells[colIdx], cb = b.cells[colIdx];
+            if (!ca || !cb) return 0;
+            var va = ca.getAttribute('data-sv') || ca.textContent.trim();
+            var vb = cb.getAttribute('data-sv') || cb.textContent.trim();
+            if (type === 'num') {
+                return dir * (parseFloat(va || 0) - parseFloat(vb || 0));
+            } else if (type === 'mem') {
+                return dir * (memToBytes(va) - memToBytes(vb));
+            }
+            return dir * va.localeCompare(vb);
+        });
+        rows.forEach(function(r) { tbody.appendChild(r); });
+    }
+
+    headers.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = parseInt(this.dataset.col);
+            var type = this.dataset.type || 'str';
+            if (curCol === col) {
+                curAsc = !curAsc;
+            } else {
+                curCol = col;
+                curAsc = (type === 'str');
+            }
+            headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+            this.classList.add(curAsc ? 'sort-asc' : 'sort-desc');
+            sortTable(col, type, curAsc);
+        });
+    });
+})();
+
 (function() {
     var fgBaseUrl = '{{ url_for("api_flamegraph", upload_id=record.id) }}';
     var processesUrl = '{{ url_for("api_processes", upload_id=record.id) }}';
@@ -979,6 +1082,227 @@
             }
         });
     }
+})();
+
+(function() {
+    var iotopUrl = '{{ url_for("api_iotop_procs", upload_id=record.id) }}';
+    var iotopChart = null;
+    var allData = null;
+    var currentTick = 0;
+    var showMode = 'total';
+    var idMode = 'tid';
+    var sortCol = 'io_pct';
+    var sortAsc = false;
+
+    var COLORS = { read: '#4dc9f6', write: '#f67019' };
+
+    function formatRate(bps) {
+        if (bps >= 1024 * 1024 * 1024) return (bps / (1024 * 1024 * 1024)).toFixed(2) + ' GB/s';
+        if (bps >= 1024 * 1024) return (bps / (1024 * 1024)).toFixed(2) + ' MB/s';
+        if (bps >= 1024) return (bps / 1024).toFixed(2) + ' KB/s';
+        return bps.toFixed(0) + ' B/s';
+    }
+
+    function activeTicks() {
+        var src = allData[idMode] || allData.tid || allData.pid;
+        return src ? src.ticks : [];
+    }
+
+    function renderIotopChart() {
+        var ticks = activeTicks();
+        if (!ticks.length) return;
+        var labels = ticks.map(function(t) { return t.timestamp; });
+
+        var readKey = showMode === 'total' ? 'total_read' : 'actual_read';
+        var writeKey = showMode === 'total' ? 'total_write' : 'actual_write';
+        var prefix = showMode === 'total' ? 'Total' : 'Actual';
+
+        var datasets = [
+            {
+                label: prefix + ' Disk Read',
+                data: ticks.map(function(t) { return t[readKey]; }),
+                borderColor: COLORS.read, backgroundColor: 'transparent',
+                borderWidth: 1.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2
+            },
+            {
+                label: prefix + ' Disk Write',
+                data: ticks.map(function(t) { return t[writeKey]; }),
+                borderColor: COLORS.write, backgroundColor: 'transparent',
+                borderWidth: 1.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2
+            }
+        ];
+
+        if (iotopChart) iotopChart.destroy();
+
+        var textColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--text-secondary').trim() || '#aaa';
+        var ctx = document.getElementById('iotop-chart').getContext('2d');
+        iotopChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                onClick: function(evt) {
+                    var points = iotopChart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+                    if (points.length) {
+                        currentTick = points[0].index;
+                        renderIotopTable();
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, boxWidth: 8, color: textColor }
+                    },
+                    tooltip: {
+                        mode: 'index', intersect: false,
+                        callbacks: {
+                            label: function(c) {
+                                return c.dataset.label + ': ' + formatRate(c.parsed.y);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Elapsed seconds', color: textColor },
+                        ticks: { color: textColor },
+                        grid: { color: 'rgba(255,255,255,0.06)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: textColor, callback: function(v) { return formatRate(v); } },
+                        grid: { color: 'rgba(255,255,255,0.06)' }
+                    }
+                }
+            }
+        });
+    }
+
+    function sortProcs(procs) {
+        var col = sortCol;
+        var dir = sortAsc ? 1 : -1;
+        return procs.slice().sort(function(a, b) {
+            var va = a[col], vb = b[col];
+            if (va == null) va = '';
+            if (vb == null) vb = '';
+            if (typeof va === 'string') return dir * va.localeCompare(vb);
+            return dir * (va - vb);
+        });
+    }
+
+    function updateSortIndicators() {
+        document.querySelectorAll('#iotop-table .pid-col-sortable').forEach(function(th) {
+            th.classList.remove('sort-asc', 'sort-desc');
+            if (th.dataset.sort === sortCol) th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+        });
+    }
+
+    function renderIotopTable() {
+        var ticks = activeTicks();
+        var tick = ticks[currentTick];
+        var label = document.getElementById('iotop-time-label');
+        label.textContent = 'Second ' + (currentTick + 1) + ' of ' + ticks.length;
+
+        document.getElementById('iotop-prev').disabled = currentTick <= 0;
+        document.getElementById('iotop-next').disabled = currentTick >= ticks.length - 1;
+
+        var idLabel = idMode === 'tid' ? 'TID' : 'PID';
+        document.getElementById('iotop-id-col').textContent = idLabel;
+
+        var tbody = document.getElementById('iotop-tbody');
+        if (!tick || !tick.processes || !tick.processes.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No active I/O processes at this second</td></tr>';
+            return;
+        }
+
+        var procs = sortProcs(tick.processes);
+        var html = '';
+        procs.forEach(function(p) {
+            html += '<tr>'
+                + '<td><code>' + p.tid + '</code></td>'
+                + '<td>' + p.prio + '</td>'
+                + '<td>' + p.user + '</td>'
+                + '<td class="col-right">' + formatRate(p.read_bps) + '</td>'
+                + '<td class="col-right">' + formatRate(p.write_bps) + '</td>'
+                + '<td class="col-right">' + p.swapin_pct.toFixed(2) + '%</td>'
+                + '<td class="col-right' + (p.io_pct > 50 ? ' text-hot' : p.io_pct > 10 ? ' text-warm' : '') + '">' + p.io_pct.toFixed(2) + '%</td>'
+                + '<td><code class="top-cmd">' + (p.command || '-') + '</code></td>'
+                + '</tr>';
+        });
+        tbody.innerHTML = html;
+    }
+
+    document.getElementById('iotop-prev').addEventListener('click', function() {
+        if (currentTick > 0) { currentTick--; renderIotopTable(); }
+    });
+    document.getElementById('iotop-next').addEventListener('click', function() {
+        var ticks = activeTicks();
+        if (currentTick < ticks.length - 1) { currentTick++; renderIotopTable(); }
+    });
+
+    document.querySelectorAll('#iotop-mode-toggle .toggle-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('#iotop-mode-toggle .toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            showMode = this.dataset.val;
+            renderIotopChart();
+        });
+    });
+
+    document.querySelectorAll('#iotop-id-toggle .toggle-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('#iotop-id-toggle .toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            var newMode = this.dataset.val;
+            if (newMode !== idMode && allData[newMode]) {
+                idMode = newMode;
+                var ticks = activeTicks();
+                if (currentTick >= ticks.length) currentTick = Math.max(0, ticks.length - 1);
+                renderIotopTable();
+            }
+        });
+    });
+
+    document.querySelectorAll('#iotop-table .pid-col-sortable').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = this.dataset.sort;
+            if (sortCol === col) {
+                sortAsc = !sortAsc;
+            } else {
+                sortCol = col;
+                sortAsc = (col === 'tid' || col === 'prio' || col === 'user');
+            }
+            updateSortIndicators();
+            renderIotopTable();
+        });
+    });
+
+    fetch(iotopUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data) return;
+            var hasTid = data.tid && data.tid.ticks && data.tid.ticks.length;
+            var hasPid = data.pid && data.pid.ticks && data.pid.ticks.length;
+            // Backward compat: old format had {ticks: [...]} directly
+            if (!hasTid && !hasPid && data.ticks && data.ticks.length) {
+                data = { tid: data };
+                hasTid = true;
+            }
+            if (!hasTid && !hasPid) return;
+            allData = data;
+            if (!hasTid) { idMode = 'pid'; }
+            document.getElementById('iotop-section').style.display = '';
+            if (!hasTid || !hasPid) {
+                document.getElementById('iotop-id-toggle').style.display = 'none';
+            }
+            var btns = document.querySelectorAll('#iotop-id-toggle .toggle-btn');
+            btns.forEach(function(b) { b.classList.toggle('active', b.dataset.val === idMode); });
+            updateSortIndicators();
+            renderIotopChart();
+            renderIotopTable();
+        });
 })();
 </script>
 {% endblock %}

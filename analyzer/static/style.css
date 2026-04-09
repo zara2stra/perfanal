@@ -1,5 +1,5 @@
 /* ========================================
-   Perf Flame Analyzer - Stylesheet
+   FlamePerf Linux Analyzer - Stylesheet
    ======================================== */
 
 :root {
@@ -96,9 +96,9 @@ pre {
 }
 .nav-brand:hover { text-decoration: none; color: var(--accent); }
 
-.brand-icon {
-    color: var(--accent);
-    font-size: 1.3rem;
+.brand-logo {
+    height: 28px;
+    width: auto;
 }
 
 .nav-links { display: flex; gap: 1.5rem; }
@@ -1287,4 +1287,61 @@ details summary { cursor: pointer; }
 .iostat-chart-wrap {
     position: relative;
     height: 400px;
+}
+
+/* ── iotop time navigation ── */
+.iotop-time-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+}
+.iotop-time-nav .btn {
+    min-width: 2rem;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0.25rem 0.5rem;
+}
+.iotop-time-nav .btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+#iotop-time-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 10rem;
+    text-align: center;
+}
+
+.pid-col-sortable,
+.top-col-sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 1.1rem !important;
+    white-space: nowrap;
+}
+.pid-col-sortable:hover,
+.top-col-sortable:hover {
+    color: var(--accent);
+}
+.pid-col-sortable::after,
+.top-col-sortable::after {
+    content: '\2195';
+    position: absolute;
+    right: 0.25rem;
+    opacity: 0.3;
+    font-size: 0.7rem;
+}
+.pid-col-sortable.sort-asc::after,
+.top-col-sortable.sort-asc::after {
+    content: '\25B2';
+    opacity: 0.9;
+}
+.pid-col-sortable.sort-desc::after,
+.top-col-sortable.sort-desc::after {
+    content: '\25BC';
+    opacity: 0.9;
 }

@@ -652,6 +652,127 @@ def parse_iostat(text):
     }
 
 
+def _parse_iotop_rate(s):
+    """Convert an iotop rate string like '1.20 M/s' or '512.00 K/s' to bytes/s."""
+    s = s.strip()
+    m = re.match(r'([\d.]+)\s*([BKMGTP])/s', s, re.IGNORECASE)
+    if not m:
+        return 0.0
+    val = float(m.group(1))
+    unit = m.group(2).upper()
+    multipliers = {'B': 1, 'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4, 'P': 1024**5}
+    return val * multipliers.get(unit, 1)
+
+
+def parse_iotop(text):
+    """
+    Parse `sudo iotop -b -o -d 1 -n N` output into per-second ticks.
+
+    Returns: {
+        'ticks': [
+            {
+                'timestamp': int,
+                'total_read': float, 'total_write': float,
+                'actual_read': float, 'actual_write': float,
+                'processes': [
+                    {'tid': int, 'prio': str, 'user': str,
+                     'read_bps': float, 'write_bps': float,
+                     'swapin_pct': float, 'io_pct': float,
+                     'command': str},
+                    ...
+                ]
+            },
+            ...
+        ]
+    }
+    Returns None if text cannot be parsed.
+    """
+    if not text or not text.strip():
+        return None
+
+    lines = text.splitlines()
+    ticks = []
+    current_tick = None
+    tick_idx = 0
+
+    summary_re = re.compile(
+        r'(Total|Actual|Current)\s+DISK\s+READ\s*:\s*([\d.]+\s*[BKMGTP]/s)\s*\|\s*'
+        r'(Total|Actual|Current)\s+DISK\s+WRITE\s*:\s*([\d.]+\s*[BKMGTP]/s)',
+        re.IGNORECASE
+    )
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        sm = summary_re.search(stripped)
+        if sm:
+            kind = sm.group(1).lower()
+            read_val = _parse_iotop_rate(sm.group(2))
+            write_val = _parse_iotop_rate(sm.group(4))
+
+            if kind == 'total':
+                if current_tick is not None:
+                    ticks.append(current_tick)
+                current_tick = {
+                    'timestamp': tick_idx,
+                    'total_read': read_val,
+                    'total_write': write_val,
+                    'actual_read': 0.0,
+                    'actual_write': 0.0,
+                    'processes': [],
+                }
+                tick_idx += 1
+            elif kind in ('actual', 'current') and current_tick is not None:
+                current_tick['actual_read'] = read_val
+                current_tick['actual_write'] = write_val
+            continue
+
+        if stripped.startswith('TID') or stripped.startswith('PID'):
+            continue
+
+        if current_tick is None:
+            continue
+
+        # Some iotop versions (Python 3) write process lines as b'...' byte-string repr
+        if stripped.startswith("b'") and stripped.endswith("'"):
+            stripped = stripped[2:-1]
+
+        proc_re = re.match(
+            r'\s*(\d+)\s+'           # TID
+            r'(\S+)\s+'              # PRIO
+            r'(\S+)\s+'              # USER
+            r'([\d.]+)\s+([BKMGTP]/s)\s+'   # DISK READ val + unit
+            r'([\d.]+)\s+([BKMGTP]/s)\s+'   # DISK WRITE val + unit
+            r'([\d.]+)\s+%\s+'       # SWAPIN %
+            r'([\d.]+)\s+%\s*'       # IO %
+            r'(.*)',                  # COMMAND (rest of line)
+            stripped, re.IGNORECASE
+        )
+        if not proc_re:
+            continue
+
+        current_tick['processes'].append({
+            'tid': int(proc_re.group(1)),
+            'prio': proc_re.group(2),
+            'user': proc_re.group(3),
+            'read_bps': _parse_iotop_rate(proc_re.group(4) + ' ' + proc_re.group(5)),
+            'write_bps': _parse_iotop_rate(proc_re.group(6) + ' ' + proc_re.group(7)),
+            'swapin_pct': float(proc_re.group(8)),
+            'io_pct': float(proc_re.group(9)),
+            'command': proc_re.group(10).strip(),
+        })
+
+    if current_tick is not None:
+        ticks.append(current_tick)
+
+    if not ticks:
+        return None
+
+    return {'ticks': ticks}
+
+
 def parse_and_process(perf_script_text):
     """
     Full pipeline: raw perf script text -> all analysis artifacts.

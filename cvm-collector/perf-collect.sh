@@ -183,12 +183,25 @@ PERF_BIN="${WORK_DIR}/perf.data"
 # Always capture system-wide with cpu-clock; filtering happens in the analyzer.
 EVENT="cpu-clock"
 
-echo "[1/7] Starting iostat sampling (1s intervals)..."
+echo "[1/8] Starting iostat sampling (1s intervals)..."
 iostat -dxy 1 > "${WORK_DIR}/iostat_data.txt" 2>/dev/null &
 IOSTAT_PID=$!
 echo "       iostat PID: $IOSTAT_PID"
 
-echo "[2/7] Recording perf data (${DURATION}s, event=${EVENT})..."
+IOTOP_TID_PID=""
+IOTOP_PID_PID=""
+if command -v iotop &>/dev/null; then
+    echo "[2/8] Starting iotop sampling (1s intervals, ${DURATION} iterations)..."
+    sudo iotop -b -o -d 1 -n "$DURATION" > "${WORK_DIR}/iotop_data.txt" 2>/dev/null &
+    IOTOP_TID_PID=$!
+    sudo iotop -b -o -P -d 1 -n "$DURATION" > "${WORK_DIR}/iotop_pid_data.txt" 2>/dev/null &
+    IOTOP_PID_PID=$!
+    echo "       iotop by-TID PID: $IOTOP_TID_PID, by-PID PID: $IOTOP_PID_PID"
+else
+    echo "[2/8] iotop not installed, skipping process I/O collection"
+fi
+
+echo "[3/8] Recording perf data (${DURATION}s, event=${EVENT})..."
 
 # Use --call-graph dwarf for accurate userspace stack unwinding.
 # The default -g uses frame-pointer unwinding which fails on optimized
@@ -218,7 +231,15 @@ kill "$IOSTAT_PID" 2>/dev/null || true
 wait "$IOSTAT_PID" 2>/dev/null || true
 echo "       iostat samples collected: $(grep -c '^[a-zA-Z]' "${WORK_DIR}/iostat_data.txt" 2>/dev/null || echo 0) device-rows"
 
-echo "[3/7] Generating perf script output..."
+if [[ -n "$IOTOP_TID_PID" ]]; then
+    kill "$IOTOP_TID_PID" 2>/dev/null || true
+    kill "$IOTOP_PID_PID" 2>/dev/null || true
+    wait "$IOTOP_TID_PID" 2>/dev/null || true
+    wait "$IOTOP_PID_PID" 2>/dev/null || true
+    echo "       iotop ticks collected: $(grep -c '^Total DISK READ' "${WORK_DIR}/iotop_data.txt" 2>/dev/null || echo 0)"
+fi
+
+echo "[4/8] Generating perf script output..."
 sudo perf script -i "$PERF_BIN" > "${WORK_DIR}/perf_threads.txt" 2>"${WORK_DIR}/perf_script.log"
 
 PERF_THREADS_SIZE=$(stat -c%s "${WORK_DIR}/perf_threads.txt" 2>/dev/null || stat -f%z "${WORK_DIR}/perf_threads.txt" 2>/dev/null || echo "0")
@@ -249,7 +270,7 @@ if [[ "$PERF_THREADS_SIZE" -eq 0 ]]; then
     fi
 fi
 
-echo "[4/7] Collecting system metadata..."
+echo "[5/8] Collecting system metadata..."
 
 python3 - "$CLUSTER_ID" "$HOSTNAME_SHORT" "$TIMESTAMP" "$DURATION" "$FREQUENCY" "$MACHINE_TYPE" "${WORK_DIR}/metadata.json" <<'PYEOF'
 import json, platform, os, sys, subprocess
@@ -321,15 +342,15 @@ with open(output_path, "w") as f:
     json.dump(meta, f, indent=2)
 PYEOF
 
-echo "[5/7] Capturing top snapshot..."
+echo "[6/8] Capturing top snapshot..."
 top -bcn1 -w 512 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || \
     top -bn1 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || true
 
-echo "[6/7] Capturing ps snapshot..."
+echo "[7/8] Capturing ps snapshot..."
 ps -eo user,pid,ppid,%cpu,%mem,stat,args --no-headers ww > "${WORK_DIR}/ps_aux.txt" 2>/dev/null || \
     ps auxww > "${WORK_DIR}/ps_aux.txt" 2>/dev/null || true
 
-echo "[7/7] Packaging bundle..."
+echo "[8/8] Packaging bundle..."
 sudo rm -f "$PERF_BIN"
 
 BUNDLE_PATH="${OUTPUT_DIR}/${BUNDLE_NAME}.tar.gz"
@@ -340,5 +361,5 @@ echo "=== Done ==="
 echo "Bundle: $BUNDLE_PATH"
 echo "Size:   $(du -h "$BUNDLE_PATH" | cut -f1)"
 echo ""
-echo "Transfer this file to the Perf Flame Analyzer for analysis."
+echo "Transfer this file to the FlamePerf Linux Analyzer for analysis."
 echo "Use the analyzer's web UI to filter by specific processes (stargate, cassandra, etc)."

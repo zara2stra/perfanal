@@ -1,5 +1,5 @@
 """
-Flask application for the Perf Flame Analyzer.
+Flask application for the FlamePerf Linux Analyzer.
 
 Routes:
   /                     - Dashboard (list uploads, filter by cluster)
@@ -33,7 +33,7 @@ ADMIN_TOKEN_HASH = os.environ.get(
 
 from models import init_db, insert_upload, get_all_uploads, get_cluster_ids, \
     get_uploads_by_cluster, get_upload, delete_upload
-from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS, parse_iostat
+from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS, parse_iostat, parse_iotop
 from diagnostics import run_diagnostics, _classify_thread
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -284,6 +284,18 @@ def api_iostat(upload_id):
     return jsonify(iostat)
 
 
+@app.route('/api/iotop-procs/<int:upload_id>')
+def api_iotop_procs(upload_id):
+    record = get_upload(upload_id)
+    if record is None:
+        abort(404)
+    analysis = record.get('analysis_json') or {}
+    iotop = analysis.get('iotop_summary')
+    if not iotop:
+        return jsonify(None)
+    return jsonify(iotop)
+
+
 COLLECTOR_SEARCH_PATHS = [
     os.path.join(os.path.dirname(__file__), 'perf-collect.sh'),
     os.path.join(os.path.dirname(__file__), '..', 'cvm-collector', 'perf-collect.sh'),
@@ -350,6 +362,8 @@ def _process_bundle(file, manual_cluster_id):
     top_text = None
     ps_aux_text = None
     iostat_text = None
+    iotop_text = None
+    iotop_pid_text = None
 
     is_tar = False
     try:
@@ -364,7 +378,7 @@ def _process_bundle(file, manual_cluster_id):
 
     if is_tar:
         try:
-            perf_text, metadata, top_text, ps_aux_text, iostat_text = _extract_tar_bundle(save_path)
+            perf_text, metadata, top_text, ps_aux_text, iostat_text, iotop_text, iotop_pid_text = _extract_tar_bundle(save_path)
             log.info('Extracted: perf_text=%d chars, metadata keys=%s',
                      len(perf_text) if perf_text else 0,
                      list(metadata.keys()) if metadata else [])
@@ -422,6 +436,24 @@ def _process_bundle(file, manual_cluster_id):
             log.info('Parsed iostat: %d devices, %d columns',
                      len(iostat_data['devices']), len(iostat_data['columns']))
 
+    iotop_data = None
+    iotop_tid = None
+    iotop_pid = None
+    if iotop_text:
+        iotop_tid = parse_iotop(iotop_text)
+        if iotop_tid:
+            log.info('Parsed iotop (TID): %d ticks', len(iotop_tid['ticks']))
+    if iotop_pid_text:
+        iotop_pid = parse_iotop(iotop_pid_text)
+        if iotop_pid:
+            log.info('Parsed iotop (PID): %d ticks', len(iotop_pid['ticks']))
+    if iotop_tid or iotop_pid:
+        iotop_data = {}
+        if iotop_tid:
+            iotop_data['tid'] = iotop_tid
+        if iotop_pid:
+            iotop_data['pid'] = iotop_pid
+
     parsed = parse_and_process(perf_text)
     diag = run_diagnostics(parsed, metadata)
 
@@ -447,6 +479,8 @@ def _process_bundle(file, manual_cluster_id):
     }
     if iostat_data:
         analysis['iostat'] = iostat_data
+    if iotop_data:
+        analysis['iotop_summary'] = iotop_data
 
     upload_id = insert_upload(
         cluster_id=metadata.get('cluster_id', 'unknown'),
@@ -475,12 +509,14 @@ def _process_bundle(file, manual_cluster_id):
 
 
 def _extract_tar_bundle(tar_path):
-    """Extract perf_threads.txt, metadata.json, top_snapshot.txt, ps_aux.txt, and iostat_data.txt from a tar.gz bundle."""
+    """Extract perf data and supporting diagnostics from a tar.gz bundle."""
     perf_text = None
     metadata = {}
     top_text = None
     ps_aux_text = None
     iostat_text = None
+    iotop_text = None
+    iotop_pid_text = None
 
     extract_dir = tempfile.mkdtemp(prefix='perf-extract-')
     try:
@@ -513,11 +549,19 @@ def _extract_tar_bundle(tar_path):
                     with open(fpath, 'r', errors='replace') as f:
                         iostat_text = f.read()
                     log.info('Found iostat_data.txt: %d chars', len(iostat_text))
+                elif fname == 'iotop_data.txt':
+                    with open(fpath, 'r', errors='replace') as f:
+                        iotop_text = f.read()
+                    log.info('Found iotop_data.txt: %d chars', len(iotop_text))
+                elif fname == 'iotop_pid_data.txt':
+                    with open(fpath, 'r', errors='replace') as f:
+                        iotop_pid_text = f.read()
+                    log.info('Found iotop_pid_data.txt: %d chars', len(iotop_pid_text))
     finally:
         import shutil
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-    return perf_text, metadata, top_text, ps_aux_text, iostat_text
+    return perf_text, metadata, top_text, ps_aux_text, iostat_text, iotop_text, iotop_pid_text
 
 
 with app.app_context():
