@@ -22,7 +22,13 @@
                     <span class="theme-toggle-track"><span class="theme-toggle-thumb"></span></span>
                     <span class="theme-toggle-icon" id="theme-icon-light">&#9728;</span>
                 </label>
-                <a href="{{ url_for('download_collector') }}" class="nav-download-btn" title="Download perf collector script">&#8615; Download collector</a>
+                <div class="nav-download-wrap" id="dl-wrap">
+                    <button class="nav-download-btn" id="dl-toggle">&#8615; Download collector</button>
+                    <div class="nav-download-menu" id="dl-menu">
+                        <a href="{{ url_for('download_collector') }}" class="dl-menu-item">&#8615; Direct download</a>
+                        <button class="dl-menu-item" id="dl-copy-link">&#128203; Copy download link</button>
+                    </div>
+                </div>
                 <a href="{{ url_for('dashboard') }}">Dashboard</a>
                 <a href="{{ url_for('upload') }}">Upload</a>
                 <button class="admin-btn" id="admin-btn" title="Toggle admin mode">Admin</button>
@@ -139,6 +145,55 @@
         modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
 
         syncAdminBtn();
+
+        var dlWrap = document.getElementById('dl-wrap');
+        var dlToggle = document.getElementById('dl-toggle');
+        var dlCopyBtn = document.getElementById('dl-copy-link');
+        var dlUrl = window.location.origin + '{{ url_for("download_collector") }}';
+
+        function copyToClipboard(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(text).then(function() { return true; }, function() { return fallbackCopy(text); });
+            }
+            return Promise.resolve(fallbackCopy(text));
+        }
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+            return ok;
+        }
+
+        function showCopied(success) {
+            dlCopyBtn.textContent = success ? '\u2713 Copied the link to buffer' : '\u2717 Copy failed';
+            dlCopyBtn.classList.add(success ? 'dl-copied' : 'dl-copy-fail');
+            setTimeout(function() {
+                dlCopyBtn.innerHTML = '&#128203; Copy download link';
+                dlCopyBtn.classList.remove('dl-copied', 'dl-copy-fail');
+                dlWrap.classList.remove('open');
+            }, 1200);
+        }
+
+        dlToggle.addEventListener('click', function(e) {
+            e.stopPropagation();
+            dlWrap.classList.toggle('open');
+        });
+
+        dlCopyBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyToClipboard(dlUrl).then(function(ok) { showCopied(ok); });
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!dlWrap.contains(e.target)) dlWrap.classList.remove('open');
+        });
     })();
     </script>
     {% block scripts %}{% endblock %}
