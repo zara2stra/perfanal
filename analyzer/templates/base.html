@@ -31,7 +31,13 @@
                 </div>
                 <a href="{{ url_for('dashboard') }}">Dashboard</a>
                 <a href="{{ url_for('upload') }}">Upload</a>
-                <button class="admin-btn" id="admin-btn" title="Toggle admin mode">Admin</button>
+                <div class="nav-download-wrap" id="admin-wrap">
+                    <button class="admin-btn" id="admin-btn" title="Toggle admin mode">Admin</button>
+                    <div class="nav-download-menu" id="admin-menu">
+                        <button class="dl-menu-item" id="admin-exit">&#x2716; Exit Admin mode</button>
+                        <button class="dl-menu-item" id="admin-chpw">&#x1F511; Change Admin password</button>
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
@@ -66,6 +72,19 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="chpw-modal">
+        <div class="modal-box">
+            <h3>Change Admin Password</h3>
+            <input type="password" id="chpw-new" class="modal-input" placeholder="New password..." autocomplete="off">
+            <input type="password" id="chpw-confirm" class="modal-input" placeholder="Confirm new password..." autocomplete="off" style="margin-top:0.5rem;">
+            <div class="modal-error" id="chpw-error"></div>
+            <div class="modal-actions">
+                <button class="btn btn-sm" id="chpw-cancel">Cancel</button>
+                <button class="btn btn-sm btn-primary" id="chpw-submit">Change</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     (function() {
         document.querySelectorAll('.section-collapsible').forEach(function(h2) {
@@ -87,27 +106,50 @@
         });
 
         var adminBtn = document.getElementById('admin-btn');
+        var adminWrap = document.getElementById('admin-wrap');
+        var adminMenu = document.getElementById('admin-menu');
         var modal = document.getElementById('admin-modal');
         var pwInput = document.getElementById('admin-pw');
         var errorEl = document.getElementById('admin-error');
         var cancelBtn = document.getElementById('admin-cancel');
         var submitBtn = document.getElementById('admin-submit');
 
+        var chpwModal = document.getElementById('chpw-modal');
+        var chpwNew = document.getElementById('chpw-new');
+        var chpwConfirm = document.getElementById('chpw-confirm');
+        var chpwError = document.getElementById('chpw-error');
+        var chpwCancel = document.getElementById('chpw-cancel');
+        var chpwSubmit = document.getElementById('chpw-submit');
+
         function syncAdminBtn() {
             var active = !!sessionStorage.getItem('adminToken');
             adminBtn.classList.toggle('admin-btn-active', active);
             adminBtn.textContent = active ? 'Admin (on)' : 'Admin';
+            adminWrap.classList.remove('open');
         }
 
-        function openModal() {
+        function openLoginModal() {
             pwInput.value = '';
             errorEl.style.display = 'none';
             modal.classList.add('modal-visible');
             pwInput.focus();
         }
 
-        function closeModal() {
+        function closeLoginModal() {
             modal.classList.remove('modal-visible');
+        }
+
+        function openChpwModal() {
+            adminWrap.classList.remove('open');
+            chpwNew.value = '';
+            chpwConfirm.value = '';
+            chpwError.style.display = 'none';
+            chpwModal.classList.add('modal-visible');
+            chpwNew.focus();
+        }
+
+        function closeChpwModal() {
+            chpwModal.classList.remove('modal-visible');
         }
 
         function tryUnlock() {
@@ -126,7 +168,7 @@
                     sessionStorage.setItem('adminToken', data.token);
                     syncAdminBtn();
                     window.dispatchEvent(new Event('adminModeChanged'));
-                    closeModal();
+                    closeLoginModal();
                 } else {
                     errorEl.textContent = 'Incorrect password.';
                     errorEl.style.display = 'block';
@@ -141,20 +183,74 @@
             });
         }
 
-        adminBtn.addEventListener('click', function() {
+        function tryChangePassword() {
+            var np = chpwNew.value, nc = chpwConfirm.value;
+            if (!np) { chpwError.textContent = 'Enter a new password.'; chpwError.style.display = 'block'; return; }
+            if (np.length < 4) { chpwError.textContent = 'Password must be at least 4 characters.'; chpwError.style.display = 'block'; return; }
+            if (np !== nc) { chpwError.textContent = 'Passwords do not match.'; chpwError.style.display = 'block'; return; }
+            chpwSubmit.disabled = true;
+            fetch('{{ url_for("api_admin_change_password") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-Admin-Token': sessionStorage.getItem('adminToken') || ''},
+                body: JSON.stringify({new_password: np})
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                chpwSubmit.disabled = false;
+                if (data.ok) {
+                    sessionStorage.setItem('adminToken', data.token);
+                    chpwError.textContent = 'The password has been changed successfully';
+                    chpwError.className = 'modal-success';
+                    chpwError.style.display = 'block';
+                    chpwNew.value = '';
+                    chpwConfirm.value = '';
+                    setTimeout(function() { closeChpwModal(); syncAdminBtn(); chpwError.className = 'modal-error'; }, 2000);
+                } else {
+                    chpwError.textContent = data.error || 'Failed to change password.';
+                    chpwError.style.display = 'block';
+                }
+            })
+            .catch(function() {
+                chpwSubmit.disabled = false;
+                chpwError.textContent = 'Server error. Try again.';
+                chpwError.style.display = 'block';
+            });
+        }
+
+        adminBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
             if (sessionStorage.getItem('adminToken')) {
-                sessionStorage.removeItem('adminToken');
-                syncAdminBtn();
-                window.dispatchEvent(new Event('adminModeChanged'));
-                return;
+                adminWrap.classList.toggle('open');
+            } else {
+                openLoginModal();
             }
-            openModal();
+        });
+
+        document.getElementById('admin-exit').addEventListener('click', function(e) {
+            e.stopPropagation();
+            sessionStorage.removeItem('adminToken');
+            syncAdminBtn();
+            window.dispatchEvent(new Event('adminModeChanged'));
+        });
+
+        document.getElementById('admin-chpw').addEventListener('click', function(e) {
+            e.stopPropagation();
+            openChpwModal();
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!adminWrap.contains(e.target)) adminWrap.classList.remove('open');
         });
 
         submitBtn.addEventListener('click', tryUnlock);
-        cancelBtn.addEventListener('click', closeModal);
+        cancelBtn.addEventListener('click', closeLoginModal);
         pwInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') tryUnlock(); });
-        modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
+        modal.addEventListener('click', function(e) { if (e.target === modal) closeLoginModal(); });
+
+        chpwSubmit.addEventListener('click', tryChangePassword);
+        chpwCancel.addEventListener('click', closeChpwModal);
+        chpwConfirm.addEventListener('keydown', function(e) { if (e.key === 'Enter') tryChangePassword(); });
+        chpwModal.addEventListener('click', function(e) { if (e.target === chpwModal) closeChpwModal(); });
 
         syncAdminBtn();
 

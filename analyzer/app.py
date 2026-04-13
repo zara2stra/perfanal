@@ -26,10 +26,35 @@ from flask import (
     flash, jsonify, abort, send_file,
 )
 
-ADMIN_TOKEN_HASH = os.environ.get(
-    'ADMIN_TOKEN_HASH',
-    '2c0cffec058a0192b269db7e41b34e693b23df047212c7dac64bff412315d9c9',
-)
+_ADMIN_HASH_ENV = os.environ.get('ADMIN_TOKEN_HASH', '')
+_ADMIN_HASH_FILE = os.path.join(
+    os.environ.get('DATA_DIR', '/app/data'), '.admin_hash')
+
+
+def _get_admin_hash():
+    """Read the current admin hash, preferring the on-disk file over env var."""
+    try:
+        with open(_ADMIN_HASH_FILE, 'r') as f:
+            h = f.read().strip()
+            if h:
+                return h
+    except (OSError, IOError):
+        pass
+    return _ADMIN_HASH_ENV
+
+
+def _set_admin_hash(new_hash):
+    """Persist a new admin hash to disk so all workers pick it up."""
+    try:
+        os.makedirs(os.path.dirname(_ADMIN_HASH_FILE), exist_ok=True)
+        with open(_ADMIN_HASH_FILE, 'w') as f:
+            f.write(new_hash)
+    except (OSError, IOError) as exc:
+        logging.warning('Could not persist admin hash: %s', exc)
+
+
+if not _get_admin_hash():
+    logging.warning('ADMIN_TOKEN_HASH not set — admin features disabled')
 
 from models import init_db, insert_upload, get_all_uploads, get_cluster_ids, \
     get_uploads_by_cluster, get_upload, delete_upload
@@ -331,19 +356,40 @@ def download_collector():
 @app.route('/api/admin-auth', methods=['POST'])
 def api_admin_auth():
     import hmac
+    current_hash = _get_admin_hash()
+    if not current_hash:
+        return jsonify({'token': None, 'error': 'Admin not configured'}), 403
     data = request.get_json(silent=True) or {}
     pw = data.get('password', '')
     pw_hash = hashlib.sha256(pw.encode('utf-8')).hexdigest()
-    if hmac.compare_digest(pw_hash, ADMIN_TOKEN_HASH):
+    if hmac.compare_digest(pw_hash, current_hash):
         return jsonify({'token': pw_hash})
     return jsonify({'token': None}), 401
+
+
+@app.route('/api/admin-change-password', methods=['POST'])
+def api_admin_change_password():
+    import hmac
+    current_hash = _get_admin_hash()
+    token = request.headers.get('X-Admin-Token', '')
+    if not token or not current_hash or not hmac.compare_digest(token, current_hash):
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    new_pw = data.get('new_password', '')
+    if not new_pw or len(new_pw) < 4:
+        return jsonify({'ok': False, 'error': 'Password must be at least 4 characters'}), 400
+    new_hash = hashlib.sha256(new_pw.encode('utf-8')).hexdigest()
+    _set_admin_hash(new_hash)
+    log.info('Admin password changed and persisted to disk')
+    return jsonify({'ok': True, 'token': new_hash})
 
 
 @app.route('/delete/<int:upload_id>', methods=['POST'])
 def delete(upload_id):
     import hmac
+    current_hash = _get_admin_hash()
     token = request.headers.get('X-Admin-Token', '')
-    if not hmac.compare_digest(token, ADMIN_TOKEN_HASH):
+    if not current_hash or not hmac.compare_digest(token, current_hash):
         abort(403)
 
     record = get_upload(upload_id)

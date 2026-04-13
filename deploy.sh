@@ -24,6 +24,26 @@ echo " App dir: $REMOTE_BASE"
 echo " Source : $SCRIPT_DIR"
 echo ""
 
+# --- Prompt for admin password ---
+while true; do
+    read -s -p "Set admin password for the web UI: " ADMIN_PW
+    echo
+    if [[ -z "$ADMIN_PW" ]]; then
+        echo "  Password cannot be empty. Try again."
+        continue
+    fi
+    read -s -p "Confirm admin password: " ADMIN_PW2
+    echo
+    if [[ "$ADMIN_PW" != "$ADMIN_PW2" ]]; then
+        echo "  Passwords do not match. Try again."
+        continue
+    fi
+    break
+done
+ADMIN_PW_HASH=$(printf '%s' "$ADMIN_PW" | sha256sum | cut -d' ' -f1 2>/dev/null || printf '%s' "$ADMIN_PW" | shasum -a 256 | cut -d' ' -f1)
+echo "  Admin password hash: ${ADMIN_PW_HASH:0:12}..."
+echo ""
+
 run_remote() {
     ssh -o ConnectTimeout=10 "$TARGET" "$@"
 }
@@ -80,6 +100,7 @@ run_remote "podman run -d \
     --name perf-analyzer \
     --restart always \
     -p 8080:8080 \
+    -e ADMIN_TOKEN_HASH=${ADMIN_PW_HASH} \
     -v ${REMOTE_BASE}/data:/app/data:Z \
     perf-analyzer"
 
@@ -101,7 +122,7 @@ echo "[9/9] Configuring firewall and systemd..."
 
 run_remote "firewall-cmd --query-port=8080/tcp >/dev/null 2>&1 && echo '  Port 8080 already open' || { firewall-cmd --add-port=8080/tcp --permanent && firewall-cmd --reload && echo '  Port 8080 opened'; }"
 
-run_remote "cat > /etc/systemd/system/perf-analyzer.service << 'UNIT'
+run_remote "cat > /etc/systemd/system/perf-analyzer.service << UNIT
 [Unit]
 Description=FlamePerf Linux Analyzer Container
 After=network-online.target
@@ -115,6 +136,7 @@ ExecStartPre=-/usr/bin/podman stop perf-analyzer
 ExecStartPre=-/usr/bin/podman rm perf-analyzer
 ExecStart=/usr/bin/podman run --name perf-analyzer \
     -p 8080:8080 \
+    -e ADMIN_TOKEN_HASH=${ADMIN_PW_HASH} \
     -v /perfanal/perf-analyzer/data:/app/data:Z \
     perf-analyzer
 ExecStop=/usr/bin/podman stop perf-analyzer
