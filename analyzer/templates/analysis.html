@@ -68,7 +68,8 @@
 <!-- System Context -->
 {% if ctx and (ctx.load_avg_1 is defined or ctx.cpu_us is defined or ctx.mem_total_kb is defined) %}
 <div class="section-card system-context">
-    <h2>System Context &amp; Top Processes <span class="section-subtitle">(top -c)</span></h2>
+    <h2 class="section-collapsible">System Context &amp; Top Processes <span class="section-subtitle">(top -c)</span></h2>
+    <div class="section-body">
     <div class="context-grid">
         {% if ctx.load_avg_1 is defined %}
         <div class="context-card">
@@ -168,12 +169,14 @@
         <p>Top processes data requires JavaScript.</p>
     </noscript>
     {% endif %}
+    </div>
 </div>
 {% endif %}
 
 <!-- Flamegraph -->
 <div class="section-card">
-    <h2>Flamegraph</h2>
+    <h2 class="section-collapsible">Flamegraph</h2>
+    <div class="section-body">
     <div class="flamegraph-controls">
         <div class="view-toggle" id="fg-active-toggle">
             <button class="toggle-btn active" data-val="1">Active CPU</button>
@@ -197,12 +200,13 @@
     </div>
     <div id="fg-filter-info" class="fg-filter-info" style="display:none;"></div>
     <div id="flamegraph" class="flamegraph-container"></div>
+    </div>
 </div>
 
 <!-- Process / PID Table -->
 <div class="section-card">
     <div class="section-header-row">
-        <h2>Process Table <span class="section-subtitle" id="pid-table-count"></span></h2>
+        <h2 class="section-collapsible">Process Table <span class="section-subtitle" id="pid-table-count"></span></h2>
         <div class="toggle-group">
             <div class="view-toggle" id="pid-show-toggle">
                 <button class="toggle-btn active" data-val="sampled">Sampled Only</button>
@@ -211,6 +215,7 @@
             <input type="text" id="pid-table-search" placeholder="Search PID, name, or command..." class="fg-pid-input" style="width:240px;">
         </div>
     </div>
+    <div class="section-body">
     <p class="pid-table-hint">Click a row to filter the flamegraph to that PID. Sampled rows had perf hits; dimmed rows are from <code>ps</code> only.</p>
     <div class="pid-table-wrap">
         <table class="data-table compact" id="pid-table">
@@ -231,11 +236,13 @@
             </tbody>
         </table>
     </div>
+    </div>
 </div>
 
 <!-- Disk I/O (iostat) -->
 <div class="section-card" id="iostat-section" style="display:none;">
-    <h2>Disk I/O (iostat)</h2>
+    <h2 class="section-collapsible">Disk I/O (iostat)</h2>
+    <div class="section-body">
     <div class="iostat-controls">
         <div class="iostat-control-group">
             <label class="iostat-control-label">Columns:</label>
@@ -262,11 +269,13 @@
             </tbody>
         </table>
     </div>
+    </div>
 </div>
 
 <!-- Process I/O (iotop) -->
 <div class="section-card" id="iotop-section" style="display:none;">
-    <h2>Process I/O (iotop)</h2>
+    <h2 class="section-collapsible">Process I/O (iotop)</h2>
+    <div class="section-body">
     <div class="iostat-controls">
         <div class="iostat-control-group">
             <label class="iostat-control-label">Throughput:</label>
@@ -312,13 +321,14 @@
             </tbody>
         </table>
     </div>
+    </div>
 </div>
 
 <!-- CPU breakdown -->
 <div class="two-col">
     <div class="section-card">
         <div class="section-header-row">
-            <h2>CPU Breakdown</h2>
+            <h2 class="section-collapsible">CPU Breakdown</h2>
             <div class="toggle-group">
                 <div class="view-toggle" id="breakdown-active-toggle">
                     <button class="toggle-btn active" data-val="active">Active CPU</button>
@@ -330,6 +340,7 @@
                 </div>
             </div>
         </div>
+        <div class="section-body">
 
         <!-- Total / Thread view -->
         {% if analysis and analysis.process_breakdown %}
@@ -434,12 +445,14 @@
             </table>
         </div>
         {% endif %}
+        </div>
     </div>
 
     <!-- Top functions -->
     {% if analysis and analysis.top_functions %}
     <div class="section-card">
-        <h2>Top Functions (leaf)</h2>
+        <h2 class="section-collapsible">Top Functions (leaf)</h2>
+        <div class="section-body">
         <table class="data-table compact">
             <thead>
                 <tr><th>#</th><th>Function</th><th>Samples</th><th>%</th></tr>
@@ -455,6 +468,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
     {% endif %}
 </div>
@@ -462,7 +476,8 @@
 <!-- Kernel/User split -->
 {% if analysis and analysis.kernel_user_split %}
 <div class="section-card">
-    <h2>Kernel / Userspace Split</h2>
+    <h2 class="section-collapsible">Kernel / Userspace Split</h2>
+    <div class="section-body">
     <div class="ku-split">
         <div class="ku-bar">
             <div class="ku-kernel" style="width: {{ analysis.kernel_user_split.kernel_pct }}%">
@@ -472,6 +487,7 @@
                 User {{ analysis.kernel_user_split.user_pct }}%
             </div>
         </div>
+    </div>
     </div>
 </div>
 {% endif %}

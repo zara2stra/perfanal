@@ -352,6 +352,36 @@ pre {
     color: var(--text-bright);
 }
 
+.section-collapsible {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.section-collapsible::before {
+    content: '\25BC';
+    font-size: 0.6rem;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+    opacity: 0.5;
+}
+.section-collapsible:hover::before {
+    opacity: 1;
+}
+.section-collapsible.collapsed::before {
+    transform: rotate(-90deg);
+}
+.section-body {
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+.section-body.collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    overflow: hidden;
+}
+
 /* --- Upload --- */
 
 .upload-card {
