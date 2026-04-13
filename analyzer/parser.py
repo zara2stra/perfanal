@@ -480,6 +480,41 @@ def parse_top_snapshot(text):
     return result
 
 
+def parse_top_timeseries(text):
+    """Split multi-snapshot ``top -bd1`` output into per-second ticks.
+
+    Each tick is the dict returned by ``parse_top_snapshot()`` with an
+    added ``timestamp`` field (0-based second index).
+
+    Single-snapshot files (old collector) produce a 1-element list.
+
+    Returns ``{'ticks': [tick0, tick1, ...]}`` or ``None``.
+    """
+    if not text or not text.strip():
+        return None
+
+    chunks = re.split(r'(?=^top - )', text, flags=re.MULTILINE)
+    if not chunks:
+        chunks = [text]
+
+    ticks = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parsed = parse_top_snapshot(chunk)
+        if not parsed:
+            continue
+        if not parsed.get('top_processes'):
+            continue
+        parsed['timestamp'] = len(ticks)
+        ticks.append(parsed)
+
+    if not ticks:
+        return None
+    return {'ticks': ticks}
+
+
 def parse_ps_aux(text):
     """
     Parse ps output into a PID -> process info map.

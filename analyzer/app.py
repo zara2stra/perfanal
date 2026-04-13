@@ -33,7 +33,7 @@ ADMIN_TOKEN_HASH = os.environ.get(
 
 from models import init_db, insert_upload, get_all_uploads, get_cluster_ids, \
     get_uploads_by_cluster, get_upload, delete_upload
-from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS, parse_iostat, parse_iotop
+from parser import parse_and_process, folded_to_flamegraph_json, parse_top_snapshot, parse_top_timeseries, parse_ps_aux, _is_idle_sample, IDLE_FRAME_MARKERS, parse_iostat, parse_iotop
 from diagnostics import run_diagnostics, _classify_thread
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -296,6 +296,22 @@ def api_iotop_procs(upload_id):
     return jsonify(iotop)
 
 
+@app.route('/api/top-procs/<int:upload_id>')
+def api_top_procs(upload_id):
+    record = get_upload(upload_id)
+    if record is None:
+        abort(404)
+    analysis = record.get('analysis_json') or {}
+    top_ts = analysis.get('top_timeseries')
+    if not top_ts:
+        ctx = analysis.get('system_context', {})
+        if ctx.get('top_processes'):
+            top_ts = {'ticks': [dict(ctx, timestamp=0)]}
+        else:
+            return jsonify(None)
+    return jsonify(top_ts)
+
+
 COLLECTOR_SEARCH_PATHS = [
     os.path.join(os.path.dirname(__file__), 'perf-collect.sh'),
     os.path.join(os.path.dirname(__file__), '..', 'cvm-collector', 'perf-collect.sh'),
@@ -419,9 +435,16 @@ def _process_bundle(file, manual_cluster_id):
         metadata['cluster_id'] = 'unknown'
 
     system_context = {}
+    top_ts = None
     if top_text:
-        system_context = parse_top_snapshot(top_text)
-        log.info('Parsed top snapshot: %s', list(system_context.keys()))
+        top_ts = parse_top_timeseries(top_text)
+        if top_ts:
+            log.info('Parsed top timeseries: %d ticks', len(top_ts['ticks']))
+            system_context = {k: v for k, v in top_ts['ticks'][0].items()
+                              if k != 'timestamp'}
+        else:
+            system_context = parse_top_snapshot(top_text)
+            log.info('Parsed top snapshot: %s', list(system_context.keys()))
     metadata['system_context'] = system_context
 
     ps_map = {}
@@ -481,6 +504,8 @@ def _process_bundle(file, manual_cluster_id):
         analysis['iostat'] = iostat_data
     if iotop_data:
         analysis['iotop_summary'] = iotop_data
+    if top_ts:
+        analysis['top_timeseries'] = top_ts
 
     upload_id = insert_upload(
         cluster_id=metadata.get('cluster_id', 'unknown'),

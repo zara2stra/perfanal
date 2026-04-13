@@ -201,7 +201,16 @@ else
     echo "[2/8] iotop not installed, skipping process I/O collection"
 fi
 
-echo "[3/8] Recording perf data (${DURATION}s, event=${EVENT})..."
+echo "[3/8] Starting top sampling (1s intervals, ${DURATION} iterations)..."
+top -bcd1 -n "$DURATION" -w 512 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null &
+TOP_PID=$!
+if [[ $? -ne 0 ]] || ! kill -0 "$TOP_PID" 2>/dev/null; then
+    top -bd1 -n "$DURATION" > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null &
+    TOP_PID=$!
+fi
+echo "       top PID: $TOP_PID"
+
+echo "[4/8] Recording perf data (${DURATION}s, event=${EVENT})..."
 
 # Use --call-graph dwarf for accurate userspace stack unwinding.
 # The default -g uses frame-pointer unwinding which fails on optimized
@@ -239,7 +248,11 @@ if [[ -n "$IOTOP_TID_PID" ]]; then
     echo "       iotop ticks collected: $(grep -c '^Total DISK READ' "${WORK_DIR}/iotop_data.txt" 2>/dev/null || echo 0)"
 fi
 
-echo "[4/8] Generating perf script output..."
+kill "$TOP_PID" 2>/dev/null || true
+wait "$TOP_PID" 2>/dev/null || true
+echo "       top snapshots collected: $(grep -c 'load average' "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || echo 0)"
+
+echo "[5/8] Generating perf script output..."
 sudo perf script -i "$PERF_BIN" > "${WORK_DIR}/perf_threads.txt" 2>"${WORK_DIR}/perf_script.log"
 
 PERF_THREADS_SIZE=$(stat -c%s "${WORK_DIR}/perf_threads.txt" 2>/dev/null || stat -f%z "${WORK_DIR}/perf_threads.txt" 2>/dev/null || echo "0")
@@ -270,7 +283,7 @@ if [[ "$PERF_THREADS_SIZE" -eq 0 ]]; then
     fi
 fi
 
-echo "[5/8] Collecting system metadata..."
+echo "[6/8] Collecting system metadata..."
 
 python3 - "$CLUSTER_ID" "$HOSTNAME_SHORT" "$TIMESTAMP" "$DURATION" "$FREQUENCY" "$MACHINE_TYPE" "${WORK_DIR}/metadata.json" <<'PYEOF'
 import json, platform, os, sys, subprocess
@@ -341,10 +354,6 @@ meta = {
 with open(output_path, "w") as f:
     json.dump(meta, f, indent=2)
 PYEOF
-
-echo "[6/8] Capturing top snapshot..."
-top -bcn1 -w 512 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || \
-    top -bn1 > "${WORK_DIR}/top_snapshot.txt" 2>/dev/null || true
 
 echo "[7/8] Capturing ps snapshot..."
 ps -eo user,pid,ppid,%cpu,%mem,stat,args --no-headers ww > "${WORK_DIR}/ps_aux.txt" 2>/dev/null || \

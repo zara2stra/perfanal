@@ -68,7 +68,7 @@
 <!-- System Context -->
 {% if ctx and (ctx.load_avg_1 is defined or ctx.cpu_us is defined or ctx.mem_total_kb is defined) %}
 <div class="section-card system-context">
-    <h2>System Context <span class="section-subtitle">(from top snapshot at capture time)</span></h2>
+    <h2>System Context &amp; Top Processes <span class="section-subtitle">(top -c)</span></h2>
     <div class="context-grid">
         {% if ctx.load_avg_1 is defined %}
         <div class="context-card">
@@ -133,42 +133,40 @@
         {% endif %}
     </div>
 
-    {% if ctx.top_processes %}
-    <details class="top-procs-details" open>
-        <summary>Top processes at capture time (top -c)</summary>
+    <div id="top-ts-section" style="display:none;">
+        <div class="iostat-chart-wrap" id="top-cpu-chart-wrap" style="display:none;">
+            <canvas id="top-cpu-chart"></canvas>
+        </div>
+        <div class="iotop-time-nav" id="top-time-nav" style="display:none;">
+            <button class="btn btn-sm" id="top-prev" title="Previous second">&lsaquo;</button>
+            <span id="top-time-label">Second 1 of 1</span>
+            <button class="btn btn-sm" id="top-next" title="Next second">&rsaquo;</button>
+        </div>
         <div class="top-procs-wrap">
             <table class="data-table compact" id="top-procs-table">
                 <thead>
                     <tr>
-                        <th class="top-col-sortable sort-asc" data-col="0" data-type="num">PID</th>
-                        <th class="top-col-sortable" data-col="1" data-type="str">User</th>
-                        <th class="top-col-sortable col-right" data-col="2" data-type="num">%CPU</th>
-                        <th class="top-col-sortable col-right" data-col="3" data-type="num">%MEM</th>
-                        <th class="top-col-sortable col-right" data-col="4" data-type="mem">VIRT</th>
-                        <th class="top-col-sortable col-right" data-col="5" data-type="mem">RES</th>
-                        <th class="top-col-sortable" data-col="6" data-type="str">S</th>
-                        <th class="top-col-sortable" data-col="7" data-type="str">TIME+</th>
+                        <th class="top-col-sortable" data-sort="pid" data-type="num">PID</th>
+                        <th class="top-col-sortable" data-sort="user" data-type="str">User</th>
+                        <th class="top-col-sortable col-right sort-desc" data-sort="cpu_pct" data-type="num">%CPU</th>
+                        <th class="top-col-sortable col-right" data-sort="mem_pct" data-type="num">%MEM</th>
+                        <th class="top-col-sortable col-right" data-sort="virt" data-type="mem">VIRT</th>
+                        <th class="top-col-sortable col-right" data-sort="res" data-type="mem">RES</th>
+                        <th class="top-col-sortable" data-sort="state" data-type="str">S</th>
+                        <th class="top-col-sortable" data-sort="time" data-type="str">TIME+</th>
                         <th>Command</th>
                     </tr>
                 </thead>
-                <tbody>
-                    {% for p in ctx.top_processes %}
-                    <tr>
-                        <td data-sv="{{ p.pid }}"><code>{{ p.pid }}</code></td>
-                        <td data-sv="{{ p.user }}">{{ p.user }}</td>
-                        <td data-sv="{{ p.cpu_pct }}" class="col-right {% if p.cpu_pct > 50 %}text-hot{% elif p.cpu_pct > 10 %}text-warm{% endif %}">{{ p.cpu_pct }}</td>
-                        <td data-sv="{{ p.mem_pct }}" class="col-right {% if p.mem_pct > 50 %}text-hot{% elif p.mem_pct > 10 %}text-warm{% endif %}">{{ p.mem_pct }}</td>
-                        <td data-sv="{{ p.virt or '' }}" class="col-right">{{ p.virt or '' }}</td>
-                        <td data-sv="{{ p.res or '' }}" class="col-right">{{ p.res or '' }}</td>
-                        <td data-sv="{{ p.state or '' }}">{{ p.state or '' }}</td>
-                        <td data-sv="{{ p.time or '' }}"><code>{{ p.time or '' }}</code></td>
-                        <td><code class="top-cmd">{{ p.command }}</code></td>
-                    </tr>
-                    {% endfor %}
+                <tbody id="top-procs-tbody">
+                    <tr><td colspan="9" class="empty-state">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
-    </details>
+    </div>
+    {% if ctx.top_processes %}
+    <noscript>
+        <p>Top processes data requires JavaScript.</p>
+    </noscript>
     {% endif %}
 </div>
 {% endif %}
@@ -250,6 +248,19 @@
     </div>
     <div class="iostat-chart-wrap">
         <canvas id="iostat-chart"></canvas>
+    </div>
+    <div class="iotop-time-nav" id="iostat-time-nav">
+        <button class="btn btn-sm" id="iostat-prev" title="Previous second">&lsaquo;</button>
+        <span id="iostat-time-label">Second 1 of 1</span>
+        <button class="btn btn-sm" id="iostat-next" title="Next second">&rsaquo;</button>
+    </div>
+    <div class="top-procs-wrap">
+        <table class="data-table compact" id="iostat-dev-table">
+            <thead id="iostat-dev-thead"><tr></tr></thead>
+            <tbody id="iostat-dev-tbody">
+                <tr><td class="empty-state">No data</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -477,12 +488,46 @@
 
 {% block scripts %}
 <script>
+var _legendTimer = null;
+var _legendLastIdx = -1;
+var _legendLastTime = 0;
+function legendClickHandler(e, legendItem, legend) {
+    var chart = legend.chart;
+    var idx = legendItem.datasetIndex;
+    var now = Date.now();
+    var isDbl = (idx === _legendLastIdx && now - _legendLastTime < 400);
+    _legendLastTime = now;
+    _legendLastIdx = idx;
+
+    if (_legendTimer) { clearTimeout(_legendTimer); _legendTimer = null; }
+
+    if (isDbl) {
+        var visibleCount = 0;
+        chart.data.datasets.forEach(function(ds, i) {
+            if (!chart.getDatasetMeta(i).hidden) visibleCount++;
+        });
+        var isSolo = (visibleCount === 1 && !chart.getDatasetMeta(idx).hidden);
+        chart.data.datasets.forEach(function(ds, i) {
+            chart.getDatasetMeta(i).hidden = isSolo ? null : (i !== idx ? true : null);
+        });
+        chart.update();
+    } else {
+        _legendTimer = setTimeout(function() {
+            _legendTimer = null;
+            var meta = chart.getDatasetMeta(idx);
+            meta.hidden = meta.hidden ? null : true;
+            chart.update();
+        }, 300);
+    }
+}
+
 (function() {
-    var table = document.getElementById('top-procs-table');
-    if (!table) return;
-    var tbody = table.querySelector('tbody');
-    var headers = table.querySelectorAll('.top-col-sortable');
-    var curCol = 0, curAsc = true;
+    var topUrl = '{{ url_for("api_top_procs", upload_id=record.id) }}';
+    var topChart = null;
+    var topData = null;
+    var topTick = 0;
+    var topSortCol = 'cpu_pct';
+    var topSortAsc = false;
 
     function memToBytes(s) {
         if (!s) return 0;
@@ -495,39 +540,136 @@
         return v * (mult[u] || 1);
     }
 
-    function sortTable(colIdx, type, asc) {
-        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-        var dir = asc ? 1 : -1;
-        rows.sort(function(a, b) {
-            var ca = a.cells[colIdx], cb = b.cells[colIdx];
-            if (!ca || !cb) return 0;
-            var va = ca.getAttribute('data-sv') || ca.textContent.trim();
-            var vb = cb.getAttribute('data-sv') || cb.textContent.trim();
-            if (type === 'num') {
-                return dir * (parseFloat(va || 0) - parseFloat(vb || 0));
-            } else if (type === 'mem') {
-                return dir * (memToBytes(va) - memToBytes(vb));
-            }
-            return dir * va.localeCompare(vb);
+    function sortProcs(procs) {
+        var col = topSortCol;
+        var dir = topSortAsc ? 1 : -1;
+        return procs.slice().sort(function(a, b) {
+            var va = a[col], vb = b[col];
+            if (va == null) va = '';
+            if (vb == null) vb = '';
+            if (col === 'virt' || col === 'res') return dir * (memToBytes(va) - memToBytes(vb));
+            if (typeof va === 'number') return dir * (va - vb);
+            return dir * String(va).localeCompare(String(vb));
         });
-        rows.forEach(function(r) { tbody.appendChild(r); });
     }
 
-    headers.forEach(function(th) {
-        th.addEventListener('click', function() {
-            var col = parseInt(this.dataset.col);
-            var type = this.dataset.type || 'str';
-            if (curCol === col) {
-                curAsc = !curAsc;
-            } else {
-                curCol = col;
-                curAsc = (type === 'str');
+    function updateSortIndicators() {
+        document.querySelectorAll('#top-procs-table .top-col-sortable').forEach(function(th) {
+            th.classList.remove('sort-asc', 'sort-desc');
+            if (th.dataset.sort === topSortCol) th.classList.add(topSortAsc ? 'sort-asc' : 'sort-desc');
+        });
+    }
+
+    function renderTopChart() {
+        var ticks = topData.ticks;
+        if (ticks.length <= 1) return;
+        document.getElementById('top-cpu-chart-wrap').style.display = '';
+
+        var labels = ticks.map(function(t) { return t.timestamp; });
+        var textColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--text-secondary').trim() || '#aaa';
+
+        var datasets = [
+            { label: 'us%', data: ticks.map(function(t) { return t.cpu_us || 0; }),
+              borderColor: '#4dc9f6', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2 },
+            { label: 'sy%', data: ticks.map(function(t) { return t.cpu_sy || 0; }),
+              borderColor: '#f67019', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2 },
+            { label: 'wa%', data: ticks.map(function(t) { return t.cpu_wa || 0; }),
+              borderColor: '#f53794', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2 },
+            { label: 'id%', data: ticks.map(function(t) { return t.cpu_id || 0; }),
+              borderColor: '#acc236', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 3, pointHoverRadius: 6, tension: 0.2 }
+        ];
+
+        if (topChart) topChart.destroy();
+        var ctx = document.getElementById('top-cpu-chart').getContext('2d');
+        topChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                onClick: function(evt) {
+                    var points = topChart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+                    if (points.length) { topTick = points[0].index; renderTopTable(); }
+                },
+                plugins: {
+                    legend: { position: 'bottom', onClick: legendClickHandler, labels: { usePointStyle: true, boxWidth: 8, color: textColor } },
+                    tooltip: { mode: 'index', intersect: false,
+                        callbacks: { label: function(c) { return c.dataset.label + ': ' + c.parsed.y.toFixed(1) + '%'; } }
+                    }
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Elapsed seconds', color: textColor },
+                         ticks: { color: textColor }, grid: { color: 'rgba(255,255,255,0.06)' } },
+                    y: { beginAtZero: true, max: 100,
+                         ticks: { color: textColor, callback: function(v) { return v + '%'; } },
+                         grid: { color: 'rgba(255,255,255,0.06)' } }
+                }
             }
-            headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
-            this.classList.add(curAsc ? 'sort-asc' : 'sort-desc');
-            sortTable(col, type, curAsc);
+        });
+    }
+
+    function renderTopTable() {
+        var ticks = topData.ticks;
+        var tick = ticks[topTick];
+        var label = document.getElementById('top-time-label');
+        label.textContent = 'Second ' + (topTick + 1) + ' of ' + ticks.length;
+        document.getElementById('top-prev').disabled = topTick <= 0;
+        document.getElementById('top-next').disabled = topTick >= ticks.length - 1;
+
+        var tbody = document.getElementById('top-procs-tbody');
+        var procs = tick.top_processes || [];
+        if (!procs.length) {
+            tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No processes at this second</td></tr>';
+            return;
+        }
+        procs = sortProcs(procs);
+        var html = '';
+        procs.forEach(function(p) {
+            html += '<tr>'
+                + '<td><code>' + p.pid + '</code></td>'
+                + '<td>' + (p.user || '') + '</td>'
+                + '<td class="col-right' + (p.cpu_pct > 50 ? ' text-hot' : p.cpu_pct > 10 ? ' text-warm' : '') + '">' + p.cpu_pct + '</td>'
+                + '<td class="col-right' + (p.mem_pct > 50 ? ' text-hot' : p.mem_pct > 10 ? ' text-warm' : '') + '">' + p.mem_pct + '</td>'
+                + '<td class="col-right">' + (p.virt || '') + '</td>'
+                + '<td class="col-right">' + (p.res || '') + '</td>'
+                + '<td>' + (p.state || '') + '</td>'
+                + '<td><code>' + (p.time || '') + '</code></td>'
+                + '<td><code class="top-cmd">' + (p.command || '') + '</code></td>'
+                + '</tr>';
+        });
+        tbody.innerHTML = html;
+    }
+
+    document.querySelectorAll('#top-procs-table .top-col-sortable').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = this.dataset.sort;
+            if (topSortCol === col) { topSortAsc = !topSortAsc; }
+            else { topSortCol = col; topSortAsc = (this.dataset.type === 'str'); }
+            updateSortIndicators();
+            renderTopTable();
         });
     });
+
+    document.getElementById('top-prev').addEventListener('click', function() {
+        if (topTick > 0) { topTick--; renderTopTable(); }
+    });
+    document.getElementById('top-next').addEventListener('click', function() {
+        if (topData && topTick < topData.ticks.length - 1) { topTick++; renderTopTable(); }
+    });
+
+    fetch(topUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data || !data.ticks || !data.ticks.length) return;
+            topData = data;
+            document.getElementById('top-ts-section').style.display = '';
+            if (data.ticks.length > 1) {
+                document.getElementById('top-time-nav').style.display = '';
+            }
+            updateSortIndicators();
+            renderTopChart();
+            renderTopTable();
+        });
 })();
 
 (function() {
@@ -950,6 +1092,10 @@
     var ioData = null;
     var activeCols = {};
     var activeDevs = {};
+    var ioTick = 0;
+    var ioMaxLen = 0;
+    var ioSortCol = '';
+    var ioSortAsc = false;
 
     fetch(iostatUrl)
         .then(function(r) { return r.json(); })
@@ -959,6 +1105,8 @@
             document.getElementById('iostat-section').style.display = '';
             initControls();
             renderChart();
+            buildTableHeader();
+            renderIostatTable();
         });
 
     function initControls() {
@@ -1016,7 +1164,7 @@
 
     function renderChart() {
         var datasets = [];
-        var maxLen = 0;
+        ioMaxLen = 0;
         var colorIdx = 0;
 
         ioData.devices.forEach(function(dev) {
@@ -1024,7 +1172,7 @@
             ioData.columns.forEach(function(col) {
                 if (!activeCols[col]) return;
                 var vals = ioData.series[dev][col];
-                if (vals.length > maxLen) maxLen = vals.length;
+                if (vals.length > ioMaxLen) ioMaxLen = vals.length;
                 datasets.push({
                     label: dev + ' ' + col,
                     data: vals,
@@ -1039,10 +1187,12 @@
         });
 
         var labels = [];
-        for (var i = 0; i < maxLen; i++) labels.push(i);
+        for (var i = 0; i < ioMaxLen; i++) labels.push(i);
 
         if (ioChart) ioChart.destroy();
 
+        var textColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--text-secondary').trim() || '#aaa';
         var ctx = document.getElementById('iostat-chart').getContext('2d');
         ioChart = new Chart(ctx, {
             type: 'line',
@@ -1051,37 +1201,129 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: 'index', intersect: false },
+                onClick: function(evt) {
+                    var points = ioChart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+                    if (points.length) {
+                        ioTick = points[0].index;
+                        renderIostatTable();
+                    }
+                },
                 plugins: {
                     legend: {
                         position: 'bottom',
-                        labels: {
-                            usePointStyle: true,
-                            boxWidth: 8,
-                            color: getComputedStyle(document.documentElement)
-                                       .getPropertyValue('--text-primary').trim() || '#e0e0e0'
-                        }
+                        onClick: legendClickHandler,
+                        labels: { usePointStyle: true, boxWidth: 8, color: textColor }
                     },
                     tooltip: { mode: 'index', intersect: false }
                 },
                 scales: {
                     x: {
-                        title: { display: true, text: 'Elapsed seconds',
-                                 color: getComputedStyle(document.documentElement)
-                                            .getPropertyValue('--text-secondary').trim() || '#aaa' },
-                        ticks: { color: getComputedStyle(document.documentElement)
-                                            .getPropertyValue('--text-secondary').trim() || '#aaa' },
+                        title: { display: true, text: 'Elapsed seconds', color: textColor },
+                        ticks: { color: textColor },
                         grid: { color: 'rgba(255,255,255,0.06)' }
                     },
                     y: {
                         beginAtZero: true,
-                        ticks: { color: getComputedStyle(document.documentElement)
-                                            .getPropertyValue('--text-secondary').trim() || '#aaa' },
+                        ticks: { color: textColor },
                         grid: { color: 'rgba(255,255,255,0.06)' }
                     }
                 }
             }
         });
+
+        if (ioTick >= ioMaxLen) ioTick = Math.max(0, ioMaxLen - 1);
+        renderIostatTable();
     }
+
+    function buildTableHeader() {
+        var tr = document.querySelector('#iostat-dev-thead tr');
+        tr.innerHTML = '';
+        var devTh = document.createElement('th');
+        devTh.textContent = 'Device';
+        devTh.className = 'top-col-sortable';
+        devTh.dataset.col = '__dev__';
+        devTh.dataset.type = 'str';
+        tr.appendChild(devTh);
+        ioData.columns.forEach(function(col) {
+            var th = document.createElement('th');
+            th.textContent = col;
+            th.className = 'top-col-sortable col-right';
+            th.dataset.col = col;
+            th.dataset.type = 'num';
+            tr.appendChild(th);
+        });
+        tr.querySelectorAll('.top-col-sortable').forEach(function(th) {
+            th.addEventListener('click', function() {
+                var col = this.dataset.col;
+                if (ioSortCol === col) {
+                    ioSortAsc = !ioSortAsc;
+                } else {
+                    ioSortCol = col;
+                    ioSortAsc = (this.dataset.type === 'str');
+                }
+                tr.querySelectorAll('.top-col-sortable').forEach(function(h) {
+                    h.classList.remove('sort-asc', 'sort-desc');
+                });
+                this.classList.add(ioSortAsc ? 'sort-asc' : 'sort-desc');
+                renderIostatTable();
+            });
+        });
+    }
+
+    function renderIostatTable() {
+        if (!ioData) return;
+        var maxLen = ioMaxLen || 1;
+        var label = document.getElementById('iostat-time-label');
+        label.textContent = 'Second ' + (ioTick + 1) + ' of ' + maxLen;
+        document.getElementById('iostat-prev').disabled = ioTick <= 0;
+        document.getElementById('iostat-next').disabled = ioTick >= maxLen - 1;
+
+        var rows = [];
+        ioData.devices.forEach(function(dev) {
+            if (SKIP_DEV_RE.test(dev)) return;
+            var row = { __dev__: dev };
+            ioData.columns.forEach(function(col) {
+                var arr = ioData.series[dev][col];
+                row[col] = (ioTick < arr.length) ? arr[ioTick] : 0;
+            });
+            rows.push(row);
+        });
+
+        if (ioSortCol) {
+            var dir = ioSortAsc ? 1 : -1;
+            rows.sort(function(a, b) {
+                var va = a[ioSortCol], vb = b[ioSortCol];
+                if (typeof va === 'string') return dir * va.localeCompare(vb);
+                return dir * ((va || 0) - (vb || 0));
+            });
+        }
+
+        var tbody = document.getElementById('iostat-dev-tbody');
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="' + (ioData.columns.length + 1) + '" class="empty-state">No devices</td></tr>';
+            return;
+        }
+        var html = '';
+        rows.forEach(function(r) {
+            html += '<tr><td><code>' + r.__dev__ + '</code></td>';
+            ioData.columns.forEach(function(col) {
+                var v = r[col] || 0;
+                var cls = 'col-right';
+                if (col === '%util' && v > 80) cls += ' text-hot';
+                else if (col === '%util' && v > 40) cls += ' text-warm';
+                html += '<td class="' + cls + '">' + v.toFixed(2) + '</td>';
+            });
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+    }
+
+    document.getElementById('iostat-prev').addEventListener('click', function() {
+        if (ioTick > 0) { ioTick--; renderIostatTable(); }
+    });
+    document.getElementById('iostat-next').addEventListener('click', function() {
+        if (ioTick < ioMaxLen - 1) { ioTick++; renderIostatTable(); }
+    });
 })();
 
 (function() {
@@ -1153,6 +1395,7 @@
                 plugins: {
                     legend: {
                         position: 'bottom',
+                        onClick: legendClickHandler,
                         labels: { usePointStyle: true, boxWidth: 8, color: textColor }
                     },
                     tooltip: {
